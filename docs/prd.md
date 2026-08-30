@@ -1,6 +1,6 @@
 # Backlot — Product Requirements Document
 
-**Status:** Draft v0.1  
+**Status:** Draft v0.2  
 **Date:** 2026-08-30  
 **Repo:** [PixnBits/backlot](https://github.com/PixnBits/backlot)  
 **Codename etymology:** A film backlot is a constructed world that looks lived-in. False fronts. Soundstages with real doors that open onto plywood. Crew on the other side of the wall, logging every take. That is the product.
@@ -115,7 +115,7 @@ Pause + two containers share the guest kernel. That is what makes guest eBPF use
 - Control plane maps `world_id` / `session_id` → pod IP (or internal Service).
 - Agent traffic is sticky for the lease. No “new container per tool call” unless the caller asks for a fresh world.
 - Warm pool: N pre-booted worlds in `Idle`, claimed in O(milliseconds) + policy apply.
-- Heartbeat. Miss N beats → snapshot optional → destroy.
+- Heartbeat / any usage slides `ttl_pause`, `ttl_store`, `ttl_prune` (§15.6).
 - Mid-lease **network phases** (examples):
   1. `dark` — no egress
   2. `proxy` — only egress-proxy
@@ -152,7 +152,7 @@ Boot artifact: guest kernel hash, rootfs hash, policy hash, seccomp blob hash, e
 ## 7. API sketch (world-runtime)
 
 ```
-POST   /v1/worlds                  → lease {profile, ttl, network_phase}
+POST   /v1/worlds                  → lease {profile, ttl_pause, ttl_store, ttl_prune, network_phase}
 GET    /v1/worlds/{id}
 POST   /v1/worlds/{id}/heartbeat
 POST   /v1/worlds/{id}/exec        → {argv, stdin?, timeout} via bwrap
@@ -253,12 +253,85 @@ If “Backlot” feels too cute in a compliance deck, the sober subtitle is **Op
 
 ## 14. Open questions
 
-1. First target runtime: raw Firecracker + jailer, or Kata-fc on an existing cluster?
-2. Public vs private default for the GitHub repo? (created private)
-3. Language for world-runtime: Go (containerd/Kata gravity) vs Rust (Firecracker gravity)?
-4. Do we want snapshot/restore in M3 or slip to M4?
+1. ~~First target runtime~~ → **Kubernetes + Kata-fc / firecracker-containerd** (§15.1).
+2. ~~Public vs private~~ → **public** (§15.3). Flip visibility in GitHub settings.
+3. Language for world-runtime: Go vs Rust — still open (§15.2).
+4. Snapshot/restore: pulled forward into lease clocks (§15.6). M3 should pause; M4 should store/restore.
 5. Is `/opt/grok` the canonical decoy path in demos, or do we generalize immediately?
+6. Continuity desk storage: object-lock bucket vs append-only log service vs both?
 
 ---
 
 *This document is the contract. Implementation that violates §9 is a bug, not a stretch goal.*
+
+# 15. Decisions log (v0.2 — 2026-08-30)
+
+## 15.1 Target runtime: Kubernetes first
+
+Worlds are scheduled as pods with a Firecracker-backed RuntimeClass (`kata-fc` or firecracker-containerd). Control plane, router, continuity sink, and warm-pool controller are ordinary cluster workloads. Nodes that run worlds must expose `/dev/kvm` (bare metal preferred; nested virt is allowed with the I/O tax documented in §11).
+
+Raw Firecracker + jailer remains the *engine*, not the user-facing orchestrator.
+
+## 15.2 Language
+
+Unset. Go has containerd/CRI/Kubernetes gravity. Rust has Firecracker gravity. Decide at M2 when we write world-runtime, not before. Dual implementation is a non-goal.
+
+## 15.3 Visibility
+
+Repo should be **public**. Created private by default; flip in GitHub → Settings → Danger zone → Change visibility. The connector used to create the repo cannot change visibility.
+
+## 15.4 Continuity desk (shared audit sink)
+
+Correct: the append-only log is a **cluster service**, not a disk inside each world.
+
+- Worlds **emit**. The desk **commits**.
+- Per-world hash chain (world cannot rewrite its own past even in memory we later snapshot).
+- Desk adds a global sequence / Merkle cursor so an auditor can prove ingest order across the lot.
+- Auth: the world’s service account / SPIFFE identity. No world credential may `DELETE` or `PUT` over an existing event.
+- A world must not read another world’s events by default.
+- The sink is not mounted into any Bubblewrap jail. The sidecar may hold a write-only socket or mTLS client, not a bind of the desk’s data volume.
+
+“Common service across worlds” yes. “Lives in the world container’s filesystem” no.
+
+## 15.5 Packing: what a container is allowed to run
+
+The phrase “each container able to run a number of microVMs” is the part to correct.
+
+| Unit | What it is | How many microVMs |
+|---|---|---|
+| Kubernetes **node** (KVM) | Host kernel + Firecracker processes | Many worlds. This is density. |
+| **Lot worker** / node agent | Privileged host process talking to KVM | Manages many worlds on that node |
+| Kubernetes **pod** with `kata-fc` | The pod *is* the microVM | **One** world. Sidecar + runtime share that guest kernel. |
+| Bubblewrap jail | Process tree inside the guest | Many per world, same tenant |
+| Tenant container spawning VMs | Would need `/dev/kvm` in the guest | **No.** Firecracker does not expose nested virt to guests. |
+
+Two tenants never share a guest kernel (§9.8). Multiple tool jails in one world is the intended fan-out. Multiple worlds on one *node* is the intended scale-out. Multiple worlds inside one tenant pod is how you accidentally rebuild a shared-kernel cluster and call it isolation.
+
+If “lot container” meant “a DaemonSet worker on the node that shepherds many Firecracker processes,” that worker is host infrastructure, not a world. Name it the **lot boss**. Keep it off the tenant network path.
+
+## 15.6 Lease clocks (sliding TTL)
+
+Create-world requires three durations, all **sliding on activity** (exec, heartbeat, file ingest, network phase change):
+
+| Clock | When it fires | Effect | Node RAM |
+|---|---|---|---|
+| `ttl_pause` | Idle this long | Firecracker **Pause** (vCPUs frozen). World still scheduled. | Still held |
+| `ttl_store` | Idle this long after pause, or total idle | Snapshot (mem + vmstate + disk) to object storage; VMM process exits; pod may scale to zero | Released |
+| `ttl_prune` | Idle this long in storage | Delete snapshot + retire `world_id`. Continuity events are **not** pruned with the world unless a separate retention policy says so. | n/a |
+
+Activity resets all three clocks. That is the “reset each usage” rule.
+
+Wake paths:
+
+- From **paused**: `Resume`. Milliseconds. Sticky router still has the same pod.
+- From **stored**: restore snapshot into a new VMM (new pod is fine). Router remaps `world_id`. Seconds, not a full cold boot, if the snapshot is warm in cache.
+- From **pruned**: gone. Client must lease a new world.
+
+Hard rules:
+
+- Pause without store still costs the node. Warm pool and paused worlds compete for RAM; cap them.
+- Snapshot size ≈ guest RAM + dirty disk. Budget storage or `ttl_store` will surprise you.
+- Snapshot restore is not a security boundary. A paused/stored world is still that tenant’s world. Do not resume a snapshot onto a node and then attach a different tenant.
+- Continuity desk outlives `ttl_prune` by default (evidence is not ephemeral just because compute is).
+
+Default sketch for the demo profile (not law): `ttl_pause=15m`, `ttl_store=2h`, `ttl_prune=7d`.
