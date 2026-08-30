@@ -24,6 +24,8 @@ router → KVM node (host eBPF) → microVM → world-runtime
 
 - [PRD](docs/prd.md) — contract, API sketch, milestones M0–M4
 - [Inner-ring agent spec](docs/agent-sandbox-meta-prompt.md) — invariants and tests T1–T10
+- [Related work](docs/related-work.md) — Crew, E2B, Kata, what we will not copy
+- [Grok Build prompt (M1)](docs/grok-build-m1.md) — site vs local test split
 
 ## Next
 
