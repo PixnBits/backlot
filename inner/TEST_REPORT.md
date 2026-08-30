@@ -9,8 +9,8 @@
 | Capability | Probe | Result |
 |---|---|---|
 | `bwrap` on PATH | `command -v bwrap` | **yes** — bubblewrap 0.8.0 (Debian `bubblewrap_0.8.0-2+deb12u1_amd64.deb`; the site image has no apt package index, so `apt install bubblewrap` was not how it got here. Local: `sudo apt install bubblewrap`.) |
-| Unprivileged user namespaces | `bwrap --unshare-all … -- /usr/bin/id` | **yes** |
-| `libseccomp` / Python `seccomp` | `pkg-config` / `import seccomp` | **no** — generator is shipped classic BPF (`inner/seccomp.py`). Unit tests inspect the bytecode; bwrap loads it via `--seccomp FD`. |
+| Unprivileged user namespaces | `bwrap --unshare-all … -- /usr/bin/id` | **yes** (needs `/usr` + `/lib64` symlink or `execvp` is ENOENT) |
+| `libseccomp` / Python `seccomp` | `pkg-config` / `import seccomp` | **no** — generator is shipped classic BPF (`inner/seccomp.py`). Unit tests inspect the bytecode; bwrap loads it via `--seccomp FD`. libseccomp.so.2 is present; headers and the Python module are not. |
 | `/dev/kvm` readable | `test -r /dev/kvm` | **yes** — **not used**. M1 does not implement Firecracker. |
 | `firecracker` on PATH | `command -v firecracker` | **no** |
 | Python 3 | `python3 --version` | 3.10.21 |
@@ -43,6 +43,8 @@ Coverage:
 ## `make test-int` (T1–T10)
 
 **PASS** — executed as C programs through `inner/run.py` / bwrap, not shell one-liners.
+
+Re-run 2026-08-30 (independent session, same machine class): 15 pass / 0 fail / 0 not-run.
 
 | Test | Result | Detail |
 |---|---|---|

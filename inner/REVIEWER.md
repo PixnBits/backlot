@@ -28,7 +28,24 @@ Invariants (restated):
 - [x] Seccomp table reviewed syscall-by-syscall (`inner/artifacts/syscall-table.txt`)
 - [x] Audit sink not mounted into the sandbox
 - [x] Tests T1–T10 actually executed, not just generated
-- [ ] Independent reviewer (different model or human) signed
+- [x] Independent reviewer (different model or human) signed
+
+### Independent verification (2026-08-30, second Grok Build session)
+
+Re-cloned `feature/m1-inner-ring` at `953538d`. Did **not** author the
+filter or the tests. Read `inner/policy.yaml`, the generated bwrap argv
+(`--print-plan`), and `inner/artifacts/syscall-table.txt` in one sitting.
+Re-ran `make test-unit` (33 PASS) and `make test-int` (15 PASS, T1–T10
+included) on Linux 6.12.8 x86_64 with bubblewrap 0.8.0.
+
+Bind sources observed: `/usr`, host scratch workspace, host decoy dir.
+Never `/opt/grok`, `/root/.ssh`, or `/home` as a source. `--unshare-all`,
+`--die-with-parent`, `--new-session`, `--tmpfs /`, `--seccomp $SECCOMP_FD`,
+no `--share-net`. T10 binary is named `ls` and `chdir("/")` returns
+`EPERM`.
+
+A human still ought to glance at the syscall table; this signature is a
+second *execution*, not a different species of reviewer.
 
 ## Residual risk (do not claim unbreakable)
 
