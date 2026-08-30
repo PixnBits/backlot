@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+inner/var/
+inner/tests/int/bin/
+inner/artifacts/plan.txt
