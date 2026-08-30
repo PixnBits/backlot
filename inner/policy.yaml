@@ -1,0 +1,184 @@
+# Backlot M1 demo profile — source of truth for the inner ring.
+#
+# Allow ls/cat of /workspace. Decoy at /opt/grok. Network none.
+# allowed_binaries are informational; I3: binary name is not policy.
+
+profile: demo
+workspace: /workspace
+network: none
+
+# I2: never used as a bind *source*. A decoy may occupy the dest.
+secret_paths:
+  - /opt/grok
+  - /root/.ssh
+  - /home
+
+# dest -> runtime (generated tree) or an explicit host directory that is
+# itself not a secret path.
+decoy_paths:
+  /opt/grok: runtime
+
+allowed_binaries:
+  - ls
+  - cat
+
+# Host paths. Missing ones are skipped. Debian /bin -> usr/bin becomes --symlink.
+ro_binds:
+  - /usr
+  - /bin
+  - /lib
+  - /lib64
+  - /sbin
+
+rw_binds: []
+
+# Allow-list. I3 names listed under denied_syscalls cannot appear here.
+allowed_syscalls:
+  - read
+  - write
+  - open
+  - close
+  - stat
+  - fstat
+  - lstat
+  - poll
+  - lseek
+  - mmap
+  - mprotect
+  - munmap
+  - brk
+  - rt_sigaction
+  - rt_sigprocmask
+  - rt_sigreturn
+  - ioctl
+  - pread64
+  - pwrite64
+  - readv
+  - writev
+  - access
+  - pipe
+  - select
+  - sched_yield
+  - mremap
+  - madvise
+  - dup
+  - dup2
+  - nanosleep
+  - getpid
+  - clone
+  - fork
+  - vfork
+  - execve
+  - exit
+  - wait4
+  - uname
+  - fcntl
+  - fsync
+  - fdatasync
+  - truncate
+  - ftruncate
+  - getdents
+  - getcwd
+  - rename
+  - mkdir
+  - rmdir
+  - creat
+  - unlink
+  - readlink
+  - chmod
+  - fchmod
+  - umask
+  - gettimeofday
+  - getrlimit
+  - getuid
+  - getgid
+  - geteuid
+  - getegid
+  - getppid
+  - getpgrp
+  - getgroups
+  - capget
+  - statfs
+  - fstatfs
+  - arch_prctl
+  - setrlimit
+  - prctl
+  - gettid
+  - futex
+  - set_tid_address
+  - fadvise64
+  - clock_gettime
+  - clock_nanosleep
+  - exit_group
+  - waitid
+  - openat
+  - mkdirat
+  - newfstatat
+  - unlinkat
+  - renameat
+  - readlinkat
+  - fchmodat
+  - faccessat
+  - pselect6
+  - ppoll
+  - set_robust_list
+  - utimensat
+  - dup3
+  - pipe2
+  - prlimit64
+  - getrandom
+  - execveat
+  - rseq
+  - statx
+  - close_range
+  - openat2
+  - faccessat2
+  - getdents64
+  - link
+  - linkat
+
+# I3 + extras. Default action is ERRNO(EPERM) even for names not listed.
+denied_syscalls:
+  - chdir
+  - fchdir
+  - pivot_root
+  - mount
+  - umount2
+  - ptrace
+  - process_vm_readv
+  - process_vm_writev
+  - bpf
+  - perf_event_open
+  - keyctl
+  - add_key
+  - request_key
+  - unshare
+  - setns
+  - clone3
+  - socket
+  - socketpair
+  - connect
+  - accept
+  - accept4
+  - bind
+  - listen
+  - sendto
+  - sendmsg
+  - sendmmsg
+  - recvfrom
+  - recvmsg
+  - recvmmsg
+  - name_to_handle_at
+  - open_by_handle_at
+  - open_tree
+  - move_mount
+  - fsopen
+  - fsconfig
+  - fsmount
+  - fspick
+  - mount_setattr
+  - userfaultfd
+  - io_uring_setup
+  - io_uring_enter
+  - io_uring_register
+  - syslog
