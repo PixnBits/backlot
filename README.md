@@ -8,9 +8,9 @@ Not a disposable sandbox. A **leased world**: Firecracker (or Kata-fc) as the ou
 
 ## Status
 
-M1 — inner ring (Bubblewrap + seccomp + decoy + audit). See [inner/](inner/).
+M1 — inner ring, merged ([PR #1](https://github.com/PixnBits/backlot/pull/1)). Tag `m1` is that merge. See [inner/](inner/).
 
-M0 paper remains the contract: [docs/prd.md](docs/prd.md).
+M0/M2 paper is the contract: [docs/prd.md](docs/prd.md). Engine and language are closed (§15.2 Go, §15.7 raw Firecracker + jailer).
 
 ## Rings
 
@@ -87,7 +87,8 @@ start (I7). The audit log is *not* mounted into the jail.
 - [Inner-ring agent spec](docs/agent-sandbox-meta-prompt.md) — invariants and tests T1–T10
 - [Related work](docs/related-work.md) — Crew, E2B, Kata, what we will not copy
 - [Grok Build prompt (M1)](docs/grok-build-m1.md) — site vs local test split
+- [Grok Build prompt (M2)](docs/grok-build-m2.md) — one Firecracker world; `NOT RUN` if no `/dev/kvm`
 
 ## Next
 
-M2 is a single microVM world. Kubernetes still waits until this jail is honest.
+Paste [docs/grok-build-m2.md](docs/grok-build-m2.md) into a **local** Grok Build sitting on a machine with readable `/dev/kvm`. Do not start Kubernetes, Kata, Tetragon, or snapshot/restore. The inner ring is closed; wrap it.
