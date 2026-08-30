@@ -65,7 +65,7 @@ Avoid: calling the guest a sandbox because it has a kernel. Most of these give t
 
 ## Kubernetes-native
 
-- [Kata Containers](https://katacontainers.io) + `kata-fc` — pod *is* the microVM. Our M2/M3 path.
+- [Kata Containers](https://katacontainers.io) + `kata-fc` — pod *is* the microVM. M3 fleet path. M2 is raw Firecracker + jailer (§15.7).
 - [firecracker-containerd](https://github.com/firecracker-microvm/firecracker-containerd) — containerd runtime that boots Firecracker; runc inside the guest.
 - [Kubernetes SIG Agent Sandbox](https://agent-sandbox.sigs.k8s.io/) — SandboxClaim / warm pool / router header (`X-Sandbox-ID`). Steal the control-plane nouns; keep our inner ring.
 
