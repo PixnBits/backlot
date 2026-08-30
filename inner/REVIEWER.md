@@ -29,6 +29,7 @@ Invariants (restated):
 - [x] Audit sink not mounted into the sandbox
 - [x] Tests T1–T10 actually executed, not just generated
 - [x] Independent reviewer (different model or human) signed
+      **Grok 4.6** — merge-gate on owned machine, 2026-08-30 (see below)
 
 ### Independent verification (2026-08-30, second Grok Build session)
 
@@ -46,6 +47,34 @@ no `--share-net`. T10 binary is named `ls` and `chdir("/")` returns
 
 A human still ought to glance at the syscall table; this signature is a
 second *execution*, not a different species of reviewer.
+
+### Merge-gate verification (2026-08-30, Grok 4.6, owned machine)
+
+This sitting did **not** author the filter, the tests, or the previous
+signature. The site `TEST_REPORT` is not this signature.
+
+- Host: `pixnbits-Desktop-AMD-Ryzen-AI-Max-300-Series`
+- Kernel: Linux 7.0.0-15-generic x86_64
+- bubblewrap 0.11.1, gcc 15.2.0, Python 3.14.4
+- HEAD before this note: `401abca`
+
+Commands actually run:
+
+```
+make test-unit                         # 33 PASS
+make test-int                          # 15 PASS / 0 fail / 0 not-run
+inner/bwrap-run.sh --print-plan -- ls /opt/grok
+```
+
+`--print-plan` bind sources: `/usr`, host scratch workspace, host decoy
+dir. Never `/opt/grok`, `/root/.ssh`, or `/home` as a source.
+`--unshare-all`, `--die-with-parent`, `--new-session`, `--tmpfs /`,
+`--seccomp $SECCOMP_FD`, no `--share-net`. I3 names (`chdir`, `clone3`,
+`unshare`, `socket`, `bpf`, `ptrace`, `pivot_root`, …) are in the DENY
+table. Default return is `ERRNO(EPERM)`.
+
+`/dev/kvm` is readable here and was **not** used. M1 does not implement
+Firecracker. Jail is green; the ring is closed.
 
 ## Residual risk (do not claim unbreakable)
 
