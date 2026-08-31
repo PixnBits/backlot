@@ -1,6 +1,6 @@
 # Backlot — Product Requirements Document
 
-**Status:** Draft v0.2  
+**Status:** Draft v0.3  
 **Date:** 2026-08-30  
 **Repo:** [PixnBits/backlot](https://github.com/PixnBits/backlot)  
 **Codename etymology:** A film backlot is a constructed world that looks lived-in. False fronts. Soundstages with real doors that open onto plywood. Crew on the other side of the wall, logging every take. That is the product.
@@ -205,9 +205,10 @@ Repo, naming, rings, API sketch.
 
 ### M2 — Single microVM world
 
-- Firecracker *or* Kata-fc on a KVM host
-- world-runtime + bwrap exec
-- Guest sidecar shipping denied syscalls / decoy opens to stdout → file on host
+- Raw Firecracker + jailer on a KVM host (not Kata-fc; see §15.7)
+- Go world-runtime: `POST /v1/worlds/{id}/exec` → `inner/run.py`
+- Decoy opens + start/exit events to a file on the **host** (not yet the cluster desk)
+- Guest nic down / vsock only. No `/dev/kvm` or host audit file in the guest workspace.
 
 ### M3 — Fleet slice
 
@@ -255,16 +256,17 @@ If “Backlot” feels too cute in a compliance deck, the sober subtitle is **Op
 
 1. ~~First target runtime~~ → **Kubernetes + Kata-fc / firecracker-containerd** (§15.1).
 2. ~~Public vs private~~ → **public** (§15.3). Flip visibility in GitHub settings.
-3. Language for world-runtime: Go vs Rust — still open (§15.2).
+3. ~~Language for world-runtime~~ → **Go** (§15.2).
 4. Snapshot/restore: pulled forward into lease clocks (§15.6). M3 should pause; M4 should store/restore.
 5. Is `/opt/grok` the canonical decoy path in demos, or do we generalize immediately?
 6. Continuity desk storage: object-lock bucket vs append-only log service vs both?
+7. ~~M2 first-world engine~~ → **raw Firecracker + jailer** (§15.7). Kata-fc waits until a cluster exists.
 
 ---
 
 *This document is the contract. Implementation that violates §9 is a bug, not a stretch goal.*
 
-# 15. Decisions log (v0.2 — 2026-08-30)
+# 15. Decisions log (v0.3 — 2026-08-30)
 
 ## 15.1 Target runtime: Kubernetes first
 
@@ -274,7 +276,9 @@ Raw Firecracker + jailer remains the *engine*, not the user-facing orchestrator.
 
 ## 15.2 Language
 
-Unset. Go has containerd/CRI/Kubernetes gravity. Rust has Firecracker gravity. Decide at M2 when we write world-runtime, not before. Dual implementation is a non-goal.
+**Go.** Kubernetes gravity wins at M3. Firecracker’s Rust does not need a second runtime in this repo. Dual implementation is a non-goal.
+
+Closed 2026-08-30. Do not reopen.
 
 ## 15.3 Visibility
 
@@ -335,3 +339,11 @@ Hard rules:
 - Continuity desk outlives `ttl_prune` by default (evidence is not ephemeral just because compute is).
 
 Default sketch for the demo profile (not law): `ttl_pause=15m`, `ttl_store=2h`, `ttl_prune=7d`.
+
+## 15.7 M2 first-world engine: raw Firecracker + jailer
+
+The first world is **raw Firecracker + jailer** on a KVM laptop/VM. Kata-fc waits until a cluster exists.
+
+§15.1 still holds for the *product*: Kubernetes is the fleet manager; Firecracker is the engine. M2 talks to the engine directly so M1’s jail is proven inside one microVM before RuntimeClass, a warm pool, or a DaemonSet can dilute it.
+
+Closed 2026-08-30. Do not reopen.
