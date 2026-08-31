@@ -53,3 +53,42 @@ func TestExecBodyHasNoJailKey(t *testing.T) {
 		t.Fatalf("missing timeout: %s", body)
 	}
 }
+
+func TestDropIDsUsesSudoUID(t *testing.T) {
+	env := map[string]string{"SUDO_UID": "1000", "SUDO_GID": "1000"}
+	uid, gid, err := dropIDs(0, 0, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1000 || gid != 1000 {
+		t.Fatalf("uid=%d gid=%d", uid, gid)
+	}
+}
+
+func TestDropIDsUsesPkexecUID(t *testing.T) {
+	env := map[string]string{"PKEXEC_UID": "1000"}
+	uid, gid, err := dropIDs(0, 0, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1000 || gid != 1000 {
+		t.Fatalf("uid=%d gid=%d (gid should follow uid when SUDO_GID unset)", uid, gid)
+	}
+}
+
+func TestDropIDsRejectsRoot(t *testing.T) {
+	_, _, err := dropIDs(0, 0, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("expected error for uid 0 with no sudo/pkexec env")
+	}
+}
+
+func TestDropIDsKeepsNonRoot(t *testing.T) {
+	uid, gid, err := dropIDs(1000, 1000, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1000 || gid != 1000 {
+		t.Fatalf("uid=%d gid=%d", uid, gid)
+	}
+}

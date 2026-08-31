@@ -122,11 +122,18 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		return nil, "", err
 	}
 	if os.Geteuid() == 0 {
+		uid, gid, err := dropIDs(os.Getuid(), os.Getgid(), os.Getenv)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := chownTree(jailRoot, uid, gid); err != nil {
+			return nil, "", err
+		}
 		cmd := exec.Command(opts.Jailer,
 			"--id", opts.ID,
 			"--exec-file", opts.Firecracker,
-			"--uid", strconv.Itoa(os.Getuid()),
-			"--gid", strconv.Itoa(os.Getgid()),
+			"--uid", strconv.Itoa(uid),
+			"--gid", strconv.Itoa(gid),
 			"--chroot-base-dir", chrootBase,
 			"--cgroup-version", "2",
 			"--",
@@ -282,6 +289,50 @@ func (w *World) Stop() {
 	if w.eventLn != nil {
 		_ = w.eventLn.Close()
 	}
+}
+
+// dropIDs is the uid/gid the VMM runs as after the privileged starter
+// unshares. Passing 0 makes the jailed KVM node unusable on this host
+// (EACCES). sudo/pkexec must export SUDO_UID or PKEXEC_UID.
+func dropIDs(uid, gid int, getenv func(string) string) (int, int, error) {
+	if uid != 0 {
+		return uid, gid, nil
+	}
+	if v := getenv("SUDO_UID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("SUDO_UID: %w", err)
+		}
+		uid = n
+	} else if v := getenv("PKEXEC_UID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("PKEXEC_UID: %w", err)
+		}
+		uid = n
+	}
+	if v := getenv("SUDO_GID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("SUDO_GID: %w", err)
+		}
+		gid = n
+	} else if gid == 0 && uid != 0 {
+		gid = uid
+	}
+	if uid == 0 {
+		return 0, 0, fmt.Errorf("privileged start with uid 0 cannot open KVM; invoke via sudo or pkexec so SUDO_UID/PKEXEC_UID is set")
+	}
+	return uid, gid, nil
+}
+
+func chownTree(root string, uid, gid int) error {
+	return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, uid, gid)
+	})
 }
 
 func copyFile(src, dst string) error {
