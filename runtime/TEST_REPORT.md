@@ -1,8 +1,12 @@
 # TEST_REPORT — Backlot M2 one world
 
 **Date:** 2026-08-30  
-**Branch:** `feature/m2-world`  
+**Branch:** `feature/m2.1-jailer`  
 **Honesty rule:** do not fake passes. Missing capability → `NOT RUN`.
+
+## M2.1 note
+
+Tenant `jail` JSON field removed; `POST /v1/worlds/{id}/exec` always runs `python3 /opt/backlot/inner/run.py` (leftover `"jail"` keys ignored). `m2test` fails M2-boot unless `engine=jailer`. **euid-0 sitting still outstanding** — do **not** claim `engine=jailer` PASS. Product shepherd does not pass `backlot.bare_exec=1`.
 
 ## Capability matrix (this run)
 
@@ -26,9 +30,11 @@
 
 **PASS** — 33 unit, 15 int (T1–T10). M1 did not regress.
 
+M2.1 sitting (2026-08-30, uid 1000): `make test-unit` and `make test-int` still **PASS**. `cd runtime && go test ./cmd/world-runtime ./world ./cmd/m2test ./cmd/shepherd` **PASS** (no Jail field; product boot_args have no `backlot.bare_exec`; `/v1/internal/bare-exec` is 404 unless `BACKLOT_BARE_EXEC=1`). `make test-m2` was **not** re-run.
+
 ## `make test-m2`
 
-**PASS** on this desktop.
+**PASS** on this desktop. *(M2 sitting, `engine=firecracker`. Not an M2.1 jailer run.)*
 
 | Test | Result | Detail |
 |---|---|---|
@@ -50,3 +56,4 @@ M1 `inner/run.py` writes an audit jsonl on the kernel that runs bwrap. In M2 tha
 - Jailer chroot on this uid (needs CAP_SYS_ADMIN).
 - Kubernetes / Kata / Tetragon / snapshot.
 - Unbreakability. Residual risk: guest kernel + VMM + operator error, plus `inner/REVIEWER.md`.
+- M2.1 `engine=jailer` (euid-0 sitting still outstanding).

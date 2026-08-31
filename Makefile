@@ -3,15 +3,18 @@ PYTHON ?= python3
 export FIRECRACKER_BIN ?= /usr/local/firecracker/v1.15.1/firecracker
 export JAILER_BIN ?= /usr/local/firecracker/v1.15.1/jailer
 
-.PHONY: test test-unit test-int test-m2 artifacts world-runtime rootfs kernel
+.PHONY: test test-unit test-int test-go test-m2 artifacts world-runtime rootfs kernel
 
-test: test-unit test-int
+test: test-unit test-int test-go
 
 test-unit:
 	cd inner && $(PYTHON) -m unittest discover -s tests/unit -t . -v
 
 test-int:
 	$(PYTHON) inner/tests/int/run_int.py
+
+test-go:
+	cd runtime && go test ./...
 
 artifacts:
 	$(PYTHON) inner/run.py --print-plan --dump-table inner/artifacts/syscall-table.txt > inner/artifacts/plan.txt
