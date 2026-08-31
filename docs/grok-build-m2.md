@@ -69,6 +69,7 @@ Host side (outside the guest):
 - Starts jailer + Firecracker for **one** world.
 - Owns a vsock (or a documented static-tap that the guest cannot use as egress — vsock preferred).
 - Tails events from the guest onto a **host** jsonl file (`runtime/var/world-<id>.jsonl` or similar). `O_APPEND`. The guest cannot unlink or truncate it because it is not in the guest.
+- **Do not virtio-blk (or otherwise mount) the host jsonl into the guest** so `inner/run.py` can append. M1’s audit file is written on whatever kernel runs bwrap — inside M2 that kernel is the *guest*. The host jsonl is a different file. Guest emits on vsock; the shepherd `O_APPEND`s on the host. That is O2/O5.
 - On VMM exit or SIGTERM to the shepherd: no leftover `firecracker` process, no leftover guest vCPU / vhost threads.
 
 Guest side (`world-runtime`):
@@ -120,6 +121,7 @@ Write results to `runtime/TEST_REPORT.md` (or `guest/TEST_REPORT.md`). Missing c
 - No snapshot/restore (M3 pause, M4 store).
 - No second inner-ring language, no replacing `inner/run.py`.
 - No virtio-fs. Firecracker does not have it; do not pretend.
+- Do not virtio-blk the host event file into the guest. Guest emits; host appends.
 - Nested Firecracker is a non-goal. The VMM must not expose `/dev/kvm` to the guest.
 
 ## Invariants you must not violate
