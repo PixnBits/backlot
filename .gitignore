@@ -3,3 +3,9 @@ __pycache__/
 inner/var/
 inner/tests/int/bin/
 inner/artifacts/plan.txt
+guest/artifacts/
+runtime/var/
+runtime/bin/
+*.ext4
+*.tar
+*.tar.gz

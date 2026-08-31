@@ -89,6 +89,18 @@ start (I7). The audit log is *not* mounted into the jail.
 - [Grok Build prompt (M1)](docs/grok-build-m1.md) — site vs local test split
 - [Grok Build prompt (M2)](docs/grok-build-m2.md) — one Firecracker world; `NOT RUN` if no `/dev/kvm`
 
+## M2 — one Firecracker world
+
+Raw Firecracker **v1.15.1** + jailer pin, Debian **bookworm** rootfs, vsock only. Go `world-runtime` in the guest: `POST /v1/worlds/{id}/exec` → `inner/run.py`. Guest emits events on vsock; the host shepherd `O_APPEND`s a jsonl that is **not** a guest disk.
+
+```bash
+make test-m2   # NOT RUN (exit 2) if /dev/kvm is unreadable; fail loud if KVM exists and the world leaks
+```
+
+Needs Docker to build the rootfs (no passwordless sudo for debootstrap). Kernel fetch and pins: [guest/README.md](guest/README.md). Results: [runtime/TEST_REPORT.md](runtime/TEST_REPORT.md).
+
+Jailer is used when euid is 0. Unprivileged kvm users get Firecracker directly; still no NIC.
+
 ## Next
 
-Paste [docs/grok-build-m2.md](docs/grok-build-m2.md) into a **local** Grok Build sitting on a machine with readable `/dev/kvm`. Do not start Kubernetes, Kata, Tetragon, or snapshot/restore. The inner ring is closed; wrap it.
+M3 is one-node k3s + Kata. Not before M2 stays honest.
