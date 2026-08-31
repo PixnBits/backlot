@@ -136,6 +136,7 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 			"--gid", strconv.Itoa(gid),
 			"--chroot-base-dir", chrootBase,
 			"--cgroup-version", "2",
+			"--parent-cgroup", "backlot-m2",
 			"--",
 			"--no-api",
 			"--config-file", "config.json",
