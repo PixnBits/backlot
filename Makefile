@@ -32,7 +32,8 @@ rootfs: world-runtime
 	guest/build-rootfs.sh
 
 # Skip cleanly without KVM (exit 2). Fail loud if KVM exists and the world leaks.
+# Rebuild rootfs if init.sh or world-runtime is newer (guest image bakes both).
 test-m2: kernel world-runtime
 	@if [ ! -r /dev/kvm ]; then echo "NOT RUN: /dev/kvm is not readable"; exit 2; fi
-	@if [ ! -f guest/artifacts/rootfs.ext4 ]; then $(MAKE) rootfs; fi
+	@if [ ! -f guest/artifacts/rootfs.ext4 ] || [ guest/init.sh -nt guest/artifacts/rootfs.ext4 ] || [ runtime/bin/world-runtime -nt guest/artifacts/rootfs.ext4 ]; then $(MAKE) rootfs; fi
 	runtime/bin/m2test
