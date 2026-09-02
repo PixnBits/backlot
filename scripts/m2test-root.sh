@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run host m2test as root (jailer). Invoked via: sudo -n /path/to/m2test-root.sh
-# Compile as the sudoing user (discover go from their login shell).
+# Compile as the sudoing user (discover go from their interactive PATH).
 # Only exec m2test as root. Do not widen sudoers. Do not bake a host go path.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,14 +38,20 @@ chown_if_root() {
 chown_if_root "$ROOT/runtime/bin"
 chown_if_root "$ROOT/guest/artifacts"
 
-go_bin="$(runuser -u "$user" -- bash -lc 'command -v go' || true)"
+# .bashrc (where go often lives) is skipped by non-interactive bash, including
+# `bash -lc`. Interactive `-i` is what actually sources it. Do not bake a path.
+# stderr discarded: interactive bash may warn about no TTY.
+go_bin="$(runuser -u "$user" -- bash -ic 'command -v go' 2>/dev/null || true)"
 if [ -z "$go_bin" ]; then
-  echo "m2test-root.sh: go not found on $user login PATH" >&2
+  go_bin="$(runuser -u "$user" -- bash -lc 'command -v go' 2>/dev/null || true)"
+fi
+if [ -z "$go_bin" ]; then
+  echo "m2test-root.sh: go not found on $user interactive PATH" >&2
   exit 1
 fi
 go_dir="$(dirname "$go_bin")"
 
-# bash -lc is only for discovering go. make stays non-login so cwd is not HOME.
+# Discovery may use bash -i; make stays non-login/non-interactive so cwd is not HOME.
 # rootfs is .PHONY so this always rebuilds guest/artifacts/rootfs.ext4 (not -nt).
 runuser -u "$user" -- env HOME="$home" PATH="$go_dir:$PATH" make -C "$ROOT" world-runtime
 runuser -u "$user" -- env HOME="$home" PATH="$go_dir:$PATH" make -C "$ROOT" rootfs
