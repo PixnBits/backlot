@@ -43,6 +43,7 @@ type World struct {
 	cmd        *exec.Cmd
 	eventLn    net.Listener
 	client     *http.Client
+	kvmOverlay string
 }
 
 func Start(opts StartOpts) (*World, error) {
@@ -101,13 +102,17 @@ func Start(opts StartOpts) (*World, error) {
 		},
 	}
 
+	kvmTarget := filepath.Join(jailRoot, "dev", "kvm")
+	go overlayHostKvm(kvmTarget)
 	cmd, engine, err := startVMM(opts, chrootBase, jailRoot)
 	if err != nil {
 		ln.Close()
+		unmountKvmOverlay(kvmTarget)
 		return nil, err
 	}
 	w.cmd = cmd
 	w.Engine = engine
+	w.kvmOverlay = kvmTarget
 
 	if err := w.waitHealth(45 * time.Second); err != nil {
 		w.Stop()
@@ -290,6 +295,7 @@ func (w *World) Stop() {
 	if w.eventLn != nil {
 		_ = w.eventLn.Close()
 	}
+	unmountKvmOverlay(w.kvmOverlay)
 }
 
 // dropIDs is the uid/gid the VMM runs as after the privileged starter
@@ -334,6 +340,24 @@ func chownTree(root string, uid, gid int) error {
 		}
 		return os.Chown(p, uid, gid)
 	})
+}
+
+func overlayHostKvm(target string) {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(target); err == nil {
+			_ = syscall.Mount("/dev/kvm", target, "", syscall.MS_BIND, "")
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func unmountKvmOverlay(target string) {
+	if target == "" {
+		return
+	}
+	_ = syscall.Unmount(target, syscall.MNT_DETACH)
 }
 
 func copyFile(src, dst string) error {
