@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,10 @@ const (
 
 type StartOpts struct {
 	ID, WorkDir, Kernel, Rootfs, Firecracker, Jailer string
+	// ExtraBootArgs is appended to the Firecracker kernel cmdline.
+	// Product shepherd leaves this empty. Only m2test sets
+	// "backlot.bare_exec=1" so the guest can expose /v1/internal/bare-exec.
+	ExtraBootArgs string
 }
 
 type World struct {
@@ -38,6 +43,7 @@ type World struct {
 	cmd        *exec.Cmd
 	eventLn    net.Listener
 	client     *http.Client
+	kvmOverlay string
 }
 
 func Start(opts StartOpts) (*World, error) {
@@ -62,7 +68,11 @@ func Start(opts StartOpts) (*World, error) {
 	if err := copyFile(opts.Rootfs, filepath.Join(jailRoot, "rootfs.ext4")); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(jailRoot, "config.json"), []byte(fcConfig), 0o644); err != nil {
+	cfg, err := fcConfigJSON(opts.ExtraBootArgs)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(jailRoot, "config.json"), cfg, 0o644); err != nil {
 		return nil, err
 	}
 
@@ -92,13 +102,17 @@ func Start(opts StartOpts) (*World, error) {
 		},
 	}
 
+	kvmTarget := filepath.Join(jailRoot, "dev", "kvm")
+	go overlayHostKvm(kvmTarget)
 	cmd, engine, err := startVMM(opts, chrootBase, jailRoot)
 	if err != nil {
 		ln.Close()
+		unmountKvmOverlay(kvmTarget)
 		return nil, err
 	}
 	w.cmd = cmd
 	w.Engine = engine
+	w.kvmOverlay = kvmTarget
 
 	if err := w.waitHealth(45 * time.Second); err != nil {
 		w.Stop()
@@ -113,13 +127,21 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		return nil, "", err
 	}
 	if os.Geteuid() == 0 {
+		uid, gid, err := dropIDs(os.Getuid(), os.Getgid(), os.Getenv)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := chownTree(jailRoot, uid, gid); err != nil {
+			return nil, "", err
+		}
 		cmd := exec.Command(opts.Jailer,
 			"--id", opts.ID,
 			"--exec-file", opts.Firecracker,
-			"--uid", strconv.Itoa(os.Getuid()),
-			"--gid", strconv.Itoa(os.Getgid()),
+			"--uid", strconv.Itoa(uid),
+			"--gid", strconv.Itoa(gid),
 			"--chroot-base-dir", chrootBase,
 			"--cgroup-version", "2",
+			"--parent-cgroup", "backlot-m2",
 			"--",
 			"--no-api",
 			"--config-file", "config.json",
@@ -204,12 +226,29 @@ type ExecResult struct {
 }
 
 func (w *World) Exec(ctx context.Context, argv []string, timeoutSec int) (*ExecResult, error) {
-	return w.ExecOpt(ctx, argv, timeoutSec, true)
+	return w.doExec(ctx, execURL(w.ID, false), argv, timeoutSec)
 }
 
-func (w *World) ExecOpt(ctx context.Context, argv []string, timeoutSec int, jail bool) (*ExecResult, error) {
-	body, _ := json.Marshal(map[string]any{"argv": argv, "timeout": timeoutSec, "jail": jail})
-	url := "http://vsock/v1/worlds/" + w.ID + "/exec"
+// BareExec posts to /v1/internal/bare-exec (guest must have been booted with
+// backlot.bare_exec=1). Used only by m2test to drive in-guest run_int.py.
+func (w *World) BareExec(ctx context.Context, argv []string, timeoutSec int) (*ExecResult, error) {
+	return w.doExec(ctx, execURL(w.ID, true), argv, timeoutSec)
+}
+
+func execURL(worldID string, bareExec bool) string {
+	if bareExec {
+		return "http://vsock/v1/internal/bare-exec"
+	}
+	return "http://vsock/v1/worlds/" + worldID + "/exec"
+}
+
+func execBody(argv []string, timeoutSec int) []byte {
+	body, _ := json.Marshal(map[string]any{"argv": argv, "timeout": timeoutSec})
+	return body
+}
+
+func (w *World) doExec(ctx context.Context, url string, argv []string, timeoutSec int) (*ExecResult, error) {
+	body := execBody(argv, timeoutSec)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -256,6 +295,69 @@ func (w *World) Stop() {
 	if w.eventLn != nil {
 		_ = w.eventLn.Close()
 	}
+	unmountKvmOverlay(w.kvmOverlay)
+}
+
+// dropIDs is the uid/gid the VMM runs as after the privileged starter
+// unshares. Passing 0 makes the jailed KVM node unusable on this host
+// (EACCES). sudo/pkexec must export SUDO_UID or PKEXEC_UID.
+func dropIDs(uid, gid int, getenv func(string) string) (int, int, error) {
+	if uid != 0 {
+		return uid, gid, nil
+	}
+	if v := getenv("SUDO_UID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("SUDO_UID: %w", err)
+		}
+		uid = n
+	} else if v := getenv("PKEXEC_UID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("PKEXEC_UID: %w", err)
+		}
+		uid = n
+	}
+	if v := getenv("SUDO_GID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("SUDO_GID: %w", err)
+		}
+		gid = n
+	} else if gid == 0 && uid != 0 {
+		gid = uid
+	}
+	if uid == 0 {
+		return 0, 0, fmt.Errorf("privileged start with uid 0 cannot open KVM; invoke via sudo or pkexec so SUDO_UID/PKEXEC_UID is set")
+	}
+	return uid, gid, nil
+}
+
+func chownTree(root string, uid, gid int) error {
+	return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, uid, gid)
+	})
+}
+
+func overlayHostKvm(target string) {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(target); err == nil {
+			_ = syscall.Mount("/dev/kvm", target, "", syscall.MS_BIND, "")
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func unmountKvmOverlay(target string) {
+	if target == "" {
+		return
+	}
+	_ = syscall.Unmount(target, syscall.MNT_DETACH)
 }
 
 func copyFile(src, dst string) error {
@@ -273,27 +375,35 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-const fcConfig = `{
-  "boot-source": {
-    "kernel_image_path": "vmlinux",
-    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off nomodules random.trust_cpu=on init=/sbin/init root=/dev/vda rw"
-  },
-  "drives": [
-    {
-      "drive_id": "rootfs",
-      "path_on_host": "rootfs.ext4",
-      "is_root_device": true,
-      "is_read_only": false
-    }
-  ],
-  "machine-config": {
-    "vcpu_count": 2,
-    "mem_size_mib": 512,
-    "smt": false
-  },
-  "vsock": {
-    "guest_cid": 3,
-    "uds_path": "vsock.sock"
-  }
+const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off nomodules random.trust_cpu=on init=/sbin/init root=/dev/vda rw"
+
+func fcConfigJSON(extraBootArgs string) ([]byte, error) {
+	bootArgs := defaultBootArgs
+	if extra := strings.TrimSpace(extraBootArgs); extra != "" {
+		bootArgs = bootArgs + " " + extra
+	}
+	cfg := map[string]any{
+		"boot-source": map[string]any{
+			"kernel_image_path": "vmlinux",
+			"boot_args":         bootArgs,
+		},
+		"drives": []any{
+			map[string]any{
+				"drive_id":       "rootfs",
+				"path_on_host":   "rootfs.ext4",
+				"is_root_device": true,
+				"is_read_only":   false,
+			},
+		},
+		"machine-config": map[string]any{
+			"vcpu_count":   2,
+			"mem_size_mib": 512,
+			"smt":          false,
+		},
+		"vsock": map[string]any{
+			"guest_cid": 3,
+			"uds_path":  "vsock.sock",
+		},
+	}
+	return json.MarshalIndent(cfg, "", "  ")
 }
-`

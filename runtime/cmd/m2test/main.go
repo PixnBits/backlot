@@ -47,16 +47,22 @@ func run() int {
 	jailer := getenv("JAILER_BIN", "/usr/local/firecracker/v1.15.1/jailer")
 
 	w, err := world.Start(world.StartOpts{
-		ID:          "demo",
-		WorkDir:     work,
-		Kernel:      kernel,
-		Rootfs:      rootfs,
-		Firecracker: fc,
-		Jailer:      jailer,
+		ID:            "demo",
+		WorkDir:       work,
+		Kernel:        kernel,
+		Rootfs:        rootfs,
+		Firecracker:   fc,
+		Jailer:        jailer,
+		ExtraBootArgs: "backlot.bare_exec=1",
 	})
 	if err != nil {
 		fmt.Printf("  M2-boot     FAIL  %v\n", err)
 		dumpLog(work)
+		return 1
+	}
+	if w.Engine != "jailer" {
+		fmt.Printf("  M2-boot     FAIL  engine=%s (want jailer)\n", w.Engine)
+		w.Stop()
 		return 1
 	}
 	fmt.Printf("  M2-boot     PASS  engine=%s\n", w.Engine)
@@ -71,8 +77,8 @@ func run() int {
 	}
 	fmt.Printf("  M2-exec     PASS  ls /workspace → hello.txt\n")
 
-	// T1–T10 inside the guest via inner/run.py (run_int.py compiles in-guest).
-	inner, err := w.ExecOpt(ctx, []string{"python3", "/opt/backlot/inner/tests/int/run_int.py"}, 120, false)
+	// T1-T10 inside the guest (run_int.py compiles in-guest and itself drives bwrap).
+	inner, err := w.BareExec(ctx, []string{"python3", "/opt/backlot/inner/tests/int/run_int.py"}, 120)
 	if err != nil {
 		fmt.Printf("  M2-inner    FAIL  %v\n", err)
 		w.Stop()
