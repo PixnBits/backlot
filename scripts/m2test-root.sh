@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run host m2test as root (jailer). Invoked via: sudo -n /path/to/m2test-root.sh
-# Compile as the sudoing user (discover go from their interactive PATH).
+# Compile as the sudoing user (discover go from their shell PATH).
 # Only exec m2test as root. Do not widen sudoers. Do not bake a host go path.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,20 +38,35 @@ chown_if_root() {
 chown_if_root "$ROOT/runtime/bin"
 chown_if_root "$ROOT/guest/artifacts"
 
-# .bashrc (where go often lives) is skipped by non-interactive bash, including
-# `bash -lc`. Interactive `-i` is what actually sources it. Do not bake a path.
-# stderr discarded: interactive bash may warn about no TTY.
-go_bin="$(runuser -u "$user" -- bash -ic 'command -v go' 2>/dev/null || true)"
+# Discover go without baking a host path. /bin/bash explicitly (wrapper is dash).
+# type -P not command -v (aliases). Sentinel GO= so rc noise cannot pollute.
+# </dev/null so a bashrc read/ssh-add cannot hang. HOME from getent, never
+# --preserve-environment (that keeps HOME=/root). stderr ignored (no job control).
+discover_go() {
+  flag="$1"
+  line="$(runuser -u "$user" -- env HOME="$home" /bin/bash "$flag" \
+    'builtin printf "GO=%s\n" "$(type -P go)"' </dev/null 2>/dev/null || true)"
+  bin="$(printf '%s\n' "$line" | sed -n 's/^GO=//p' | tail -n 1)"
+  case "$bin" in
+    */go) ;;
+    *) return 0 ;;
+  esac
+  if [ -x "$bin" ]; then
+    printf '%s\n' "$bin"
+  fi
+}
+
+go_bin="$(discover_go -lc || true)"
 if [ -z "$go_bin" ]; then
-  go_bin="$(runuser -u "$user" -- bash -lc 'command -v go' 2>/dev/null || true)"
+  go_bin="$(discover_go -ic || true)"
 fi
 if [ -z "$go_bin" ]; then
-  echo "m2test-root.sh: go not found on $user interactive PATH" >&2
+  echo "m2test-root.sh: go not found on $user PATH (login then interactive bash); not faking a tty" >&2
   exit 1
 fi
 go_dir="$(dirname "$go_bin")"
 
-# Discovery may use bash -i; make stays non-login/non-interactive so cwd is not HOME.
+# make stays non-login/non-interactive so cwd is not HOME.
 # rootfs is .PHONY so this always rebuilds guest/artifacts/rootfs.ext4 (not -nt).
 runuser -u "$user" -- env HOME="$home" PATH="$go_dir:$PATH" make -C "$ROOT" world-runtime
 runuser -u "$user" -- env HOME="$home" PATH="$go_dir:$PATH" make -C "$ROOT" rootfs
