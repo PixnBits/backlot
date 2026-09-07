@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -53,7 +52,7 @@ func run() int {
 		Rootfs:        rootfs,
 		Firecracker:   fc,
 		Jailer:        jailer,
-		ExtraBootArgs: "backlot.bare_exec=1",
+		BareExec:      true,
 	})
 	if err != nil {
 		fmt.Printf("  M2-boot     FAIL  %v\n", err)
@@ -135,10 +134,9 @@ func run() int {
 	fmt.Printf("  M2-no-audit PASS  host jsonl path absent from guest\n")
 
 	fcPid := w.CmdPid()
-	jail := w.JailRoot
 	w.Stop()
 	time.Sleep(500 * time.Millisecond)
-	if orphans := leftoverOur(fcPid, jail); len(orphans) > 0 {
+	if orphans := leftoverOur(fcPid); len(orphans) > 0 {
 		fmt.Printf("  M2-orphan   FAIL  leftover: %v\n", orphans)
 		return 1
 	}
@@ -156,21 +154,14 @@ func kvmReadable() error {
 	return f.Close()
 }
 
-func leftoverOur(pid int, jailRoot string) []string {
+// leftoverOur uses Kill(CmdPid(), 0) as the real check. After jailer chroot,
+// Firecracker argv is chroot-relative and will not contain the host jailRoot,
+// so pgrep-by-jailRoot is not reliable under jailer.
+func leftoverOur(pid int) []string {
 	var leftover []string
 	if pid > 0 {
 		if err := syscall.Kill(pid, 0); err == nil {
 			leftover = append(leftover, fmt.Sprintf("vmm pid %d still alive", pid))
-		}
-	}
-	out, _ := exec.Command("pgrep", "-a", "firecracker").Output()
-	for _, ln := range strings.Split(string(out), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		if strings.Contains(ln, jailRoot) {
-			leftover = append(leftover, ln)
 		}
 	}
 	return leftover

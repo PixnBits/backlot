@@ -7,7 +7,7 @@ import (
 )
 
 func TestFcConfigDefaultHasNoBareExec(t *testing.T) {
-	b, err := fcConfigJSON("")
+	b, err := fcConfigJSON(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,8 +20,8 @@ func TestFcConfigDefaultHasNoBareExec(t *testing.T) {
 	}
 }
 
-func TestFcConfigAppendsExtraBootArgs(t *testing.T) {
-	b, err := fcConfigJSON("backlot.bare_exec=1")
+func TestFcConfigBareExecAppendsBootArg(t *testing.T) {
+	b, err := fcConfigJSON(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,14 +65,25 @@ func TestDropIDsUsesSudoUID(t *testing.T) {
 	}
 }
 
-func TestDropIDsUsesPkexecUID(t *testing.T) {
+func TestDropIDsUsesPkexecUIDAndGID(t *testing.T) {
+	env := map[string]string{"PKEXEC_UID": "1000", "PKEXEC_GID": "1001"}
+	uid, gid, err := dropIDs(0, 0, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1000 || gid != 1001 {
+		t.Fatalf("uid=%d gid=%d (want PKEXEC_GID, not gid=uid)", uid, gid)
+	}
+}
+
+func TestDropIDsPkexecFallsBackGIDToUID(t *testing.T) {
 	env := map[string]string{"PKEXEC_UID": "1000"}
 	uid, gid, err := dropIDs(0, 0, func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
 	}
 	if uid != 1000 || gid != 1000 {
-		t.Fatalf("uid=%d gid=%d (gid should follow uid when SUDO_GID unset)", uid, gid)
+		t.Fatalf("uid=%d gid=%d (gid should follow uid when PKEXEC_GID unset)", uid, gid)
 	}
 }
 

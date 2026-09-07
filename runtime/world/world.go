@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -28,10 +27,10 @@ const (
 
 type StartOpts struct {
 	ID, WorkDir, Kernel, Rootfs, Firecracker, Jailer string
-	// ExtraBootArgs is appended to the Firecracker kernel cmdline.
-	// Product shepherd leaves this empty. Only m2test sets
-	// "backlot.bare_exec=1" so the guest can expose /v1/internal/bare-exec.
-	ExtraBootArgs string
+	// BareExec appends backlot.bare_exec=1 to the Firecracker kernel cmdline.
+	// Product shepherd leaves this false. Only m2test sets it so the guest
+	// can expose /v1/internal/bare-exec.
+	BareExec bool
 }
 
 type World struct {
@@ -68,7 +67,7 @@ func Start(opts StartOpts) (*World, error) {
 	if err := copyFile(opts.Rootfs, filepath.Join(jailRoot, "rootfs.ext4")); err != nil {
 		return nil, err
 	}
-	cfg, err := fcConfigJSON(opts.ExtraBootArgs)
+	cfg, err := fcConfigJSON(opts.BareExec)
 	if err != nil {
 		return nil, err
 	}
@@ -102,17 +101,24 @@ func Start(opts StartOpts) (*World, error) {
 		},
 	}
 
-	kvmTarget := filepath.Join(jailRoot, "dev", "kvm")
-	go overlayHostKvm(kvmTarget)
 	cmd, engine, err := startVMM(opts, chrootBase, jailRoot)
 	if err != nil {
 		ln.Close()
-		unmountKvmOverlay(kvmTarget)
 		return nil, err
 	}
 	w.cmd = cmd
 	w.Engine = engine
-	w.kvmOverlay = kvmTarget
+
+	// Host /dev/kvm bind over jailer's 0600 mknod: jailer-path only, fail-closed.
+	// Unprivileged Firecracker fallback never mknods; do not race a goroutine there.
+	if engine == "jailer" {
+		kvmTarget := filepath.Join(jailRoot, "dev", "kvm")
+		if err := overlayHostKvm(kvmTarget); err != nil {
+			w.Stop()
+			return nil, err
+		}
+		w.kvmOverlay = kvmTarget
+	}
 
 	if err := w.waitHealth(45 * time.Second); err != nil {
 		w.Stop()
@@ -300,7 +306,8 @@ func (w *World) Stop() {
 
 // dropIDs is the uid/gid the VMM runs as after the privileged starter
 // unshares. Passing 0 makes the jailed KVM node unusable on this host
-// (EACCES). sudo/pkexec must export SUDO_UID or PKEXEC_UID.
+// (EACCES). sudo/pkexec must export SUDO_UID/PKEXEC_UID (and preferably
+// SUDO_GID/PKEXEC_GID).
 func dropIDs(uid, gid int, getenv func(string) string) (int, int, error) {
 	if uid != 0 {
 		return uid, gid, nil
@@ -324,6 +331,12 @@ func dropIDs(uid, gid int, getenv func(string) string) (int, int, error) {
 			return 0, 0, fmt.Errorf("SUDO_GID: %w", err)
 		}
 		gid = n
+	} else if v := getenv("PKEXEC_GID"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, fmt.Errorf("PKEXEC_GID: %w", err)
+		}
+		gid = n
 	} else if gid == 0 && uid != 0 {
 		gid = uid
 	}
@@ -342,22 +355,34 @@ func chownTree(root string, uid, gid int) error {
 	})
 }
 
-func overlayHostKvm(target string) {
+// overlayHostKvm waits for jailer to mknod target, then bind-mounts host
+// /dev/kvm over it. Fail-closed: returns an error if the node never appears
+// or Mount fails (errno is logged).
+func overlayHostKvm(target string) error {
 	deadline := time.Now().Add(3 * time.Second)
+	var lastStat error
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(target); err == nil {
-			_ = syscall.Mount("/dev/kvm", target, "", syscall.MS_BIND, "")
-			return
+		if _, err := os.Stat(target); err != nil {
+			lastStat = err
+			time.Sleep(time.Millisecond)
+			continue
 		}
-		time.Sleep(time.Millisecond)
+		if err := syscall.Mount("/dev/kvm", target, "", syscall.MS_BIND, ""); err != nil {
+			log.Printf("overlayHostKvm: mount /dev/kvm -> %s: %v", target, err)
+			return fmt.Errorf("bind /dev/kvm over %s: %w", target, err)
+		}
+		return nil
 	}
+	return fmt.Errorf("overlayHostKvm: %s never appeared: %v", target, lastStat)
 }
 
 func unmountKvmOverlay(target string) {
 	if target == "" {
 		return
 	}
-	_ = syscall.Unmount(target, syscall.MNT_DETACH)
+	if err := syscall.Unmount(target, syscall.MNT_DETACH); err != nil {
+		log.Printf("unmountKvmOverlay: MNT_DETACH %s: %v", target, err)
+	}
 }
 
 func copyFile(src, dst string) error {
@@ -377,10 +402,10 @@ func copyFile(src, dst string) error {
 
 const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off nomodules random.trust_cpu=on init=/sbin/init root=/dev/vda rw"
 
-func fcConfigJSON(extraBootArgs string) ([]byte, error) {
+func fcConfigJSON(bareExec bool) ([]byte, error) {
 	bootArgs := defaultBootArgs
-	if extra := strings.TrimSpace(extraBootArgs); extra != "" {
-		bootArgs = bootArgs + " " + extra
+	if bareExec {
+		bootArgs = bootArgs + " backlot.bare_exec=1"
 	}
 	cfg := map[string]any{
 		"boot-source": map[string]any{
