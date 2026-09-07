@@ -8,9 +8,13 @@ Not a disposable sandbox. A **leased world**: Firecracker (or Kata-fc) as the ou
 
 ## Status
 
-M1 — inner ring, merged ([PR #1](https://github.com/PixnBits/backlot/pull/1)). Tag `m1` is that merge. See [inner/](inner/).
+M1 — inner ring, merged ([PR #1](https://github.com/PixnBits/backlot/pull/1)). Tag `m1`.
 
-M0/M2 paper is the contract: [docs/prd.md](docs/prd.md). Engine and language are closed (§15.2 Go, §15.7 raw Firecracker + jailer).
+M2 — one Firecracker world, tag `m2`. M2.1 — jailer required, tag `m2.1` → `6d9a148`. See [runtime/](runtime/).
+
+M3 Phase 1 — Compose control plane (`desk` + `router`), no `/dev/kvm` in those containers. Lease without host lot-boss → **503**. See [deploy/compose/](deploy/compose/) and `make test-compose-cp`. Phase 2 (three jailer worlds) is not claimed here.
+
+Contract: [docs/prd.md](docs/prd.md). Build prompt: [docs/grok-build-m3.md](docs/grok-build-m3.md).
 
 ## Rings
 

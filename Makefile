@@ -1,9 +1,9 @@
-# Backlot — M1 inner ring + M2 one world
+# Backlot — M1 inner ring + M2 one world + M3 Phase 1 compose CP
 PYTHON ?= python3
 export FIRECRACKER_BIN ?= /usr/local/firecracker/v1.15.1/firecracker
 export JAILER_BIN ?= /usr/local/firecracker/v1.15.1/jailer
 
-.PHONY: test test-unit test-int test-go test-m2 artifacts world-runtime rootfs kernel
+.PHONY: test test-unit test-int test-go test-m2 test-compose-cp artifacts world-runtime rootfs kernel
 
 test: test-unit test-int test-go
 
@@ -15,6 +15,9 @@ test-int:
 
 test-go:
 	cd runtime && go test ./...
+	cd desk && go test ./...
+	cd router && go test ./...
+	cd lot && go test ./...
 
 artifacts:
 	$(PYTHON) inner/run.py --print-plan --dump-table inner/artifacts/syscall-table.txt > inner/artifacts/plan.txt
@@ -37,3 +40,7 @@ test-m2: kernel world-runtime
 	@if [ ! -r /dev/kvm ]; then echo "NOT RUN: /dev/kvm is not readable"; exit 2; fi
 	@if [ ! -f guest/artifacts/rootfs.ext4 ] || [ guest/init.sh -nt guest/artifacts/rootfs.ext4 ] || [ runtime/bin/world-runtime -nt guest/artifacts/rootfs.ext4 ]; then $(MAKE) rootfs; fi
 	runtime/bin/m2test
+
+# Phase 1: compose desk+router (no KVM). /health 200; lease → 503; no /dev/kvm in CP containers.
+test-compose-cp:
+	./scripts/test-compose-cp.sh
