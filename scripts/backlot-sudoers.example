@@ -1,0 +1,22 @@
+# Example sudoers fragment for the M2.1 jailer sitting on a dev machine.
+# sudoers.d does NOT allow wildcards — exact command path only.
+#
+# Do not copy the AegisClaw example here. That file grants NOPASSWD pkill/rm.
+# This fragment only allows the Backlot m2test wrapper.
+#
+# Install (as a user who can still sudo with a password, once):
+#   sudo cp scripts/backlot-sudoers.example /etc/sudoers.d/backlot
+#   sudo chmod 440 /etc/sudoers.d/backlot
+#   sudo visudo -c
+#
+# Then, from this worktree:
+#   sudo -n ./scripts/m2test-root.sh
+#
+# Optional, separate from sudoers: add the kvm-capable user to group kvm
+# so a jailed /dev/kvm node 0660 root:kvm is usable after drop:
+#   sudo usermod -aG kvm pixnbits
+# (new login / newgrp kvm before the sitting)
+
+pixnbits ALL=(ALL) NOPASSWD: /home/pixnbits/projects/backlot/feature/m2.1-jailer/scripts/m2test-root.sh
+
+Defaults! /home/pixnbits/projects/backlot/feature/m2.1-jailer/scripts/m2test-root.sh env_keep += "BACKLOT_ROOT FIRECRACKER_BIN JAILER_BIN"

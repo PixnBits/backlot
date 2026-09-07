@@ -28,4 +28,17 @@ mkdir -p /run/backlot
 chmod 755 /run/backlot
 
 echo "backlot-m2 init: starting world-runtime" >/dev/kmsg 2>/dev/null || true
+
+# m2test-only: kernel cmdline backlot.bare_exec=1 enables in-guest run_int.py
+# via POST /v1/internal/bare-exec. Product boots do not set this.
+# Field-match (not substring) so backlot.bare_exec=10 cannot enable the route.
+for tok in $(cat /proc/cmdline 2>/dev/null); do
+  case "$tok" in
+    backlot.bare_exec=1)
+      export BACKLOT_BARE_EXEC=1
+      break
+      ;;
+  esac
+done
+
 exec /usr/local/bin/world-runtime

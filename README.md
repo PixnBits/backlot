@@ -100,6 +100,7 @@ make test-m2   # NOT RUN (exit 2) if /dev/kvm is unreadable; fail loud if KVM ex
 Needs Docker to build the rootfs (no passwordless sudo for debootstrap). Kernel fetch and pins: [guest/README.md](guest/README.md). Results: [runtime/TEST_REPORT.md](runtime/TEST_REPORT.md).
 
 Jailer is used when euid is 0. Unprivileged kvm users get Firecracker directly; still no NIC.
+M2.1: tenant `POST /exec` always jails (`jail` JSON field deleted). `m2test` fails M2-boot unless `engine=jailer`.
 
 ## Next
 

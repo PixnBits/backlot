@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -47,16 +46,22 @@ func run() int {
 	jailer := getenv("JAILER_BIN", "/usr/local/firecracker/v1.15.1/jailer")
 
 	w, err := world.Start(world.StartOpts{
-		ID:          "demo",
-		WorkDir:     work,
-		Kernel:      kernel,
-		Rootfs:      rootfs,
-		Firecracker: fc,
-		Jailer:      jailer,
+		ID:            "demo",
+		WorkDir:       work,
+		Kernel:        kernel,
+		Rootfs:        rootfs,
+		Firecracker:   fc,
+		Jailer:        jailer,
+		BareExec:      true,
 	})
 	if err != nil {
 		fmt.Printf("  M2-boot     FAIL  %v\n", err)
 		dumpLog(work)
+		return 1
+	}
+	if w.Engine != "jailer" {
+		fmt.Printf("  M2-boot     FAIL  engine=%s (want jailer)\n", w.Engine)
+		w.Stop()
 		return 1
 	}
 	fmt.Printf("  M2-boot     PASS  engine=%s\n", w.Engine)
@@ -71,8 +76,8 @@ func run() int {
 	}
 	fmt.Printf("  M2-exec     PASS  ls /workspace → hello.txt\n")
 
-	// T1–T10 inside the guest via inner/run.py (run_int.py compiles in-guest).
-	inner, err := w.ExecOpt(ctx, []string{"python3", "/opt/backlot/inner/tests/int/run_int.py"}, 120, false)
+	// T1-T10 inside the guest (run_int.py compiles in-guest and itself drives bwrap).
+	inner, err := w.BareExec(ctx, []string{"python3", "/opt/backlot/inner/tests/int/run_int.py"}, 120)
 	if err != nil {
 		fmt.Printf("  M2-inner    FAIL  %v\n", err)
 		w.Stop()
@@ -129,10 +134,9 @@ func run() int {
 	fmt.Printf("  M2-no-audit PASS  host jsonl path absent from guest\n")
 
 	fcPid := w.CmdPid()
-	jail := w.JailRoot
 	w.Stop()
 	time.Sleep(500 * time.Millisecond)
-	if orphans := leftoverOur(fcPid, jail); len(orphans) > 0 {
+	if orphans := leftoverOur(fcPid); len(orphans) > 0 {
 		fmt.Printf("  M2-orphan   FAIL  leftover: %v\n", orphans)
 		return 1
 	}
@@ -150,21 +154,14 @@ func kvmReadable() error {
 	return f.Close()
 }
 
-func leftoverOur(pid int, jailRoot string) []string {
+// leftoverOur uses Kill(CmdPid(), 0) as the real check. After jailer chroot,
+// Firecracker argv is chroot-relative and will not contain the host jailRoot,
+// so pgrep-by-jailRoot is not reliable under jailer.
+func leftoverOur(pid int) []string {
 	var leftover []string
 	if pid > 0 {
 		if err := syscall.Kill(pid, 0); err == nil {
 			leftover = append(leftover, fmt.Sprintf("vmm pid %d still alive", pid))
-		}
-	}
-	out, _ := exec.Command("pgrep", "-a", "firecracker").Output()
-	for _, ln := range strings.Split(string(out), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		if strings.Contains(ln, jailRoot) {
-			leftover = append(leftover, ln)
 		}
 	}
 	return leftover

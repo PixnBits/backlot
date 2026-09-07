@@ -46,6 +46,8 @@ The host jsonl is a different file from M1’s in-guest `inner/run.py` audit. Do
 
 Jailer v1.15.1 is the pin. Unprivileged `jailer` on this desktop fails `unshare` (needs CAP_SYS_ADMIN). The shepherd runs jailer when euid is 0; otherwise Firecracker as the kvm-capable user, same config (no NIC, vsock only).
 
+M2.1: Firecracker `boot_args` are generated in `runtime/world`. Product shepherd does not add `backlot.bare_exec=1`. Only `m2test` does; guest `init.sh` then exports `BACKLOT_BARE_EXEC=1` so `world-runtime` registers `POST /v1/internal/bare-exec` for in-guest `run_int.py`. Tenant `POST /v1/worlds/{id}/exec` always jails.
+
 ## What is not in the image
 
 `/dev/kvm`, the host event jsonl, host SSH keys, a bind of host `/`.
