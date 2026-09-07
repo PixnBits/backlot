@@ -96,7 +96,22 @@ func (e *HTTPEngine) Available(ctx context.Context) bool {
 		return false
 	}
 	defer res.Body.Close()
-	return res.StatusCode == http.StatusOK
+	if res.StatusCode != http.StatusOK {
+		return false
+	}
+	body, _ := io.ReadAll(res.Body)
+	var h struct {
+		EngineReady *bool `json:"engine_ready"`
+		OK          bool  `json:"ok"`
+	}
+	if err := json.Unmarshal(body, &h); err != nil {
+		// Non-JSON health: treat 200 as available (compat).
+		return true
+	}
+	if h.EngineReady != nil {
+		return *h.EngineReady
+	}
+	return h.OK
 }
 
 func (e *HTTPEngine) Lease(ctx context.Context, lr LeaseRequest) (*WorldInfo, error) {

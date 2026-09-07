@@ -12,7 +12,9 @@ M1 — inner ring, merged ([PR #1](https://github.com/PixnBits/backlot/pull/1)).
 
 M2 — one Firecracker world, tag `m2`. M2.1 — jailer required, tag `m2.1` → `6d9a148`. See [runtime/](runtime/).
 
-M3 Phase 1 — Compose control plane (`desk` + `router`), no `/dev/kvm` in those containers. Lease without host lot-boss → **503**. See [deploy/compose/](deploy/compose/) and `make test-compose-cp`. Phase 2 (three jailer worlds) is not claimed here.
+M3 Phase 1 — Compose control plane (`desk` + `router`), no `/dev/kvm` in those containers. Lease without host lot-boss → **503**. See [deploy/compose/](deploy/compose/) and `make test-compose-cp`.
+
+M3 Phase 2 — lot-boss shepherds up to **3** jailer+Firecracker worlds on the KVM host (`make test-m3`; exit 2 without KVM/sudo). See [lot/TEST_REPORT.md](lot/TEST_REPORT.md). Phase 3 not claimed.
 
 Contract: [docs/prd.md](docs/prd.md). Build prompt: [docs/grok-build-m3.md](docs/grok-build-m3.md).
 
@@ -106,6 +108,16 @@ Needs Docker to build the rootfs (no passwordless sudo for debootstrap). Kernel 
 Jailer is used when euid is 0. Unprivileged kvm users get Firecracker directly; still no NIC.
 M2.1: tenant `POST /exec` always jails (`jail` JSON field deleted). `m2test` fails M2-boot unless `engine=jailer`.
 
+## M3 — compose CP + host fleet
+
+```bash
+make test-compose-cp   # Phase 1: desk+router, no KVM
+make test-m3           # Phase 2: exit 2 without KVM/root; else three worlds
+sudo -E ./scripts/m3test-root.sh
+```
+
+Demo curls: [deploy/compose/README.md](deploy/compose/README.md).
+
 ## Next
 
-M3 is one-node k3s + Kata. Not before M2 stays honest.
+Phase 3 (pause clock / userspace proxy) only after Phase 2 is green. Kubernetes / Kata later.

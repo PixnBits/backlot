@@ -27,6 +27,9 @@ const (
 
 type StartOpts struct {
 	ID, WorkDir, Kernel, Rootfs, Firecracker, Jailer string
+	// GuestCID is the Firecracker vsock guest CID (must be >= 3 and unique on the host).
+	// Zero means default 3 (single-world / M2).
+	GuestCID uint32
 	// BareExec appends backlot.bare_exec=1 to the Firecracker kernel cmdline.
 	// Product shepherd leaves this false. Only m2test sets it so the guest
 	// can expose /v1/internal/bare-exec.
@@ -38,6 +41,7 @@ type World struct {
 	EventsPath string
 	JailRoot   string
 	UDS        string
+	GuestCID   uint32
 	Engine     string // "jailer" or "firecracker"
 	cmd        *exec.Cmd
 	eventLn    net.Listener
@@ -67,7 +71,14 @@ func Start(opts StartOpts) (*World, error) {
 	if err := copyFile(opts.Rootfs, filepath.Join(jailRoot, "rootfs.ext4")); err != nil {
 		return nil, err
 	}
-	cfg, err := fcConfigJSON(opts.BareExec)
+	guestCID := opts.GuestCID
+	if guestCID == 0 {
+		guestCID = 3
+	}
+	if guestCID < 3 {
+		return nil, fmt.Errorf("guest CID must be >= 3, got %d", guestCID)
+	}
+	cfg, err := fcConfigJSON(opts.BareExec, guestCID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +101,7 @@ func Start(opts StartOpts) (*World, error) {
 		EventsPath: events,
 		JailRoot:   jailRoot,
 		UDS:        uds,
+		GuestCID:   guestCID,
 		eventLn:    ln,
 		client: &http.Client{
 			Timeout: 90 * time.Second,
@@ -402,7 +414,7 @@ func copyFile(src, dst string) error {
 
 const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off nomodules random.trust_cpu=on init=/sbin/init root=/dev/vda rw"
 
-func fcConfigJSON(bareExec bool) ([]byte, error) {
+func fcConfigJSON(bareExec bool, guestCID uint32) ([]byte, error) {
 	bootArgs := defaultBootArgs
 	if bareExec {
 		bootArgs = bootArgs + " backlot.bare_exec=1"
@@ -426,7 +438,7 @@ func fcConfigJSON(bareExec bool) ([]byte, error) {
 			"smt":          false,
 		},
 		"vsock": map[string]any{
-			"guest_cid": 3,
+			"guest_cid": guestCID,
 			"uds_path":  "vsock.sock",
 		},
 	}

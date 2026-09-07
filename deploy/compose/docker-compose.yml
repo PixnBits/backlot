@@ -1,4 +1,4 @@
-# Backlot M3 Phase 1 — control plane only.
+# Backlot M3 — control plane (Phase 1) + optional lot-boss profile kvm (Phase 2).
 # desk + router: ordinary containers, NO /dev/kvm, NO privileged.
 # lot-boss is optional under profile "kvm" (Phase 2 host Firecracker shepherd).
 #
@@ -47,16 +47,40 @@ services:
     # Explicit: no devices:, no privileged:, no /dev/kvm
 
   # Optional — NOT started by `up desk router`. Profile kvm only.
-  # Container is the shepherd host process, not a guest packing microVMs.
+  # Privileged host shepherd: starts one Firecracker/jailer per world on the host.
+  # Prefer running ./lot/bin/lot-boss on the host instead of this container.
   lot-boss:
     profiles: ["kvm"]
     image: golang:1.22-bookworm
-    working_dir: /src
+    working_dir: /src/lot
     volumes:
-      - ../../lot:/src
+      - ../..:/src
       - /dev/kvm:/dev/kvm
       - /usr/local/firecracker/v1.15.1:/usr/local/firecracker/v1.15.1:ro
-    command: ["go", "run", "./cmd/lot-boss", "-addr", ":8070"]
+      - /tmp/backlot-lot:/tmp/backlot-lot
+    environment:
+      DESK_URL: http://127.0.0.1:18090
+      FIRECRACKER_BIN: /usr/local/firecracker/v1.15.1/firecracker
+      JAILER_BIN: /usr/local/firecracker/v1.15.1/jailer
+      BACKLOT_ROOT: /src
+    command:
+      - go
+      - run
+      - ./cmd/lot-boss
+      - -addr
+      - :8070
+      - -max-worlds
+      - "3"
+      - -warm-pool
+      - "0"
+      - -desk
+      - http://127.0.0.1:18090
+      - -work
+      - /tmp/backlot-lot
+      - -kernel
+      - /src/guest/artifacts/vmlinux-6.1.102
+      - -rootfs
+      - /src/guest/artifacts/rootfs.ext4
     network_mode: host
     privileged: true
 
