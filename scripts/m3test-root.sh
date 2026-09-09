@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export FIRECRACKER_BIN="${FIRECRACKER_BIN:-/usr/local/firecracker/v1.15.1/firecracker}"
 export JAILER_BIN="${JAILER_BIN:-/usr/local/firecracker/v1.15.1/jailer}"
 export BACKLOT_ROOT="${BACKLOT_ROOT:-$ROOT}"
+export BACKLOT_FC_WAITKVM="${BACKLOT_FC_WAITKVM:-$ROOT/runtime/bin/fc-waitkvm}"
 
 uid="${SUDO_UID:-${PKEXEC_UID:-}}"
 if [ -z "$uid" ]; then

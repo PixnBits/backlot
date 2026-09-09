@@ -37,7 +37,9 @@ type Config struct {
 	Rootfs      string
 	Firecracker string
 	Jailer      string
-	DeskURL     string
+	// WaitKVM is jailer --exec-file helper (fc-waitkvm); empty falls back to BACKLOT_FC_WAITKVM.
+	WaitKVM string
+	DeskURL string
 	// RequireJailer: EngineReady is false unless euid==0 (jailer path).
 	RequireJailer bool
 }
@@ -101,6 +103,9 @@ func NewBossConfig(cfg Config) *Boss {
 	if cfg.Jailer == "" {
 		cfg.Jailer = getenv("JAILER_BIN", "/usr/local/firecracker/v1.15.1/jailer")
 	}
+	if cfg.WaitKVM == "" {
+		cfg.WaitKVM = os.Getenv("BACKLOT_FC_WAITKVM")
+	}
 	return &Boss{
 		cfg:      cfg,
 		worlds:   map[string]*slot{},
@@ -134,6 +139,14 @@ func (b *Boss) artifactsOK() bool {
 			return false
 		}
 		if _, err := os.Stat(p); err != nil {
+			return false
+		}
+	}
+	if b.cfg.RequireJailer {
+		if b.cfg.WaitKVM == "" {
+			return false
+		}
+		if _, err := os.Stat(b.cfg.WaitKVM); err != nil {
 			return false
 		}
 	}
@@ -253,6 +266,7 @@ func (b *Boss) Lease(ctx context.Context, body leaseBody) (*World, error) {
 		Rootfs:      b.cfg.Rootfs,
 		Firecracker: b.cfg.Firecracker,
 		Jailer:      b.cfg.Jailer,
+		WaitKVM:     b.cfg.WaitKVM,
 		GuestCID:    cid,
 	})
 	if err != nil {

@@ -30,6 +30,7 @@ world-runtime:
 	cd runtime && CGO_ENABLED=0 go build -o bin/world-runtime ./cmd/world-runtime
 	cd runtime && CGO_ENABLED=0 go build -o bin/shepherd ./cmd/shepherd
 	cd runtime && CGO_ENABLED=0 go build -o bin/m2test ./cmd/m2test
+	cd runtime && CGO_ENABLED=0 go build -o bin/fc-waitkvm ./cmd/fc-waitkvm
 
 lot-bins:
 	mkdir -p lot/bin

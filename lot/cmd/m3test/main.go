@@ -75,6 +75,7 @@ func run() int {
 		WorkDir:       filepath.Join(work, "worlds"),
 		Kernel:        kernel,
 		Rootfs:        rootfs,
+		WaitKVM:       filepath.Join(repo, "runtime/bin/fc-waitkvm"),
 		DeskURL:       deskURL,
 	})
 	if !boss.EngineReady() {
@@ -109,6 +110,17 @@ func run() int {
 		info, code, err := postJSON(client, routerURL+"/v1/worlds", map[string]any{"profile": "demo"})
 		if err != nil || code != 201 {
 			fmt.Printf("  M3-lease-3  FAIL  lease %d code=%d err=%v body=%v\n", i, code, err, info)
+			// Dump shepherd log for first lease health failures.
+			filepath.Walk(filepath.Join(work, "worlds"), func(path string, info os.FileInfo, err error) error {
+				if err != nil || info == nil || info.IsDir() {
+					return nil
+				}
+				if info.Name() == "firecracker.log" {
+					b, _ := os.ReadFile(path)
+					fmt.Printf("  ---- %s ----\n%s\n", path, string(b))
+				}
+				return nil
+			})
 			boss.StopAll()
 			return 1
 		}

@@ -27,6 +27,8 @@ const (
 
 type StartOpts struct {
 	ID, WorkDir, Kernel, Rootfs, Firecracker, Jailer string
+	// WaitKVM is the jailer --exec-file helper; blocks until overlay bind live, then execs /firecracker.real.
+	WaitKVM string
 	// GuestCID is the Firecracker vsock guest CID (must be >= 3 and unique on the host).
 	// Zero means default 3 (single-world / M2).
 	GuestCID uint32
@@ -61,7 +63,17 @@ func Start(opts StartOpts) (*World, error) {
 	_ = ef.Close()
 
 	chrootBase := filepath.Join(opts.WorkDir, "jails")
-	jailRoot := filepath.Join(chrootBase, "firecracker", opts.ID, "root")
+	// Jailer places the chroot at <base>/<basename(exec-file)>/<id>/root.
+	jailFolder := "firecracker"
+	if os.Geteuid() == 0 {
+		waitKVM, err := resolveWaitKVM(opts.WaitKVM)
+		if err != nil {
+			return nil, err
+		}
+		opts.WaitKVM = waitKVM
+		jailFolder = filepath.Base(waitKVM)
+	}
+	jailRoot := filepath.Join(chrootBase, jailFolder, opts.ID, "root")
 	if err := os.MkdirAll(jailRoot, 0o755); err != nil {
 		return nil, err
 	}
@@ -145,8 +157,26 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		return nil, "", err
 	}
 	if os.Geteuid() == 0 {
+		waitKVM, err := resolveWaitKVM(opts.WaitKVM)
+		if err != nil {
+			return nil, "", err
+		}
 		uid, gid, err := dropIDs(os.Getuid(), os.Getgid(), os.Getenv)
 		if err != nil {
+			return nil, "", err
+		}
+		realFC := filepath.Join(jailRoot, "firecracker.real")
+		waitDst := filepath.Join(jailRoot, filepath.Base(waitKVM))
+		if err := copyFile(opts.Firecracker, realFC); err != nil {
+			return nil, "", fmt.Errorf("copy firecracker.real: %w", err)
+		}
+		if err := os.Chmod(realFC, 0o755); err != nil {
+			return nil, "", err
+		}
+		if err := copyFile(waitKVM, waitDst); err != nil {
+			return nil, "", fmt.Errorf("copy fc-waitkvm: %w", err)
+		}
+		if err := os.Chmod(waitDst, 0o755); err != nil {
 			return nil, "", err
 		}
 		if err := chownTree(jailRoot, uid, gid); err != nil {
@@ -154,7 +184,7 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		}
 		cmd := exec.Command(opts.Jailer,
 			"--id", opts.ID,
-			"--exec-file", opts.Firecracker,
+			"--exec-file", waitKVM,
 			"--uid", strconv.Itoa(uid),
 			"--gid", strconv.Itoa(gid),
 			"--chroot-base-dir", chrootBase,
@@ -314,6 +344,24 @@ func (w *World) Stop() {
 		_ = w.eventLn.Close()
 	}
 	unmountKvmOverlay(w.kvmOverlay)
+}
+
+func resolveWaitKVM(explicit string) (string, error) {
+	waitKVM := explicit
+	if waitKVM == "" {
+		waitKVM = os.Getenv("BACKLOT_FC_WAITKVM")
+	}
+	if waitKVM == "" {
+		return "", fmt.Errorf("WaitKVM required for jailer (set StartOpts.WaitKVM or BACKLOT_FC_WAITKVM)")
+	}
+	// Match jailer's canonicalize so <base>/<basename>/<id>/root agrees.
+	if resolved, err := filepath.EvalSymlinks(waitKVM); err == nil {
+		waitKVM = resolved
+	}
+	if _, err := os.Stat(waitKVM); err != nil {
+		return "", fmt.Errorf("WaitKVM %s: %w", waitKVM, err)
+	}
+	return waitKVM, nil
 }
 
 // dropIDs is the uid/gid the VMM runs as after the privileged starter

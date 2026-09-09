@@ -44,6 +44,7 @@ func run() int {
 
 	fc := getenv("FIRECRACKER_BIN", "/usr/local/firecracker/v1.15.1/firecracker")
 	jailer := getenv("JAILER_BIN", "/usr/local/firecracker/v1.15.1/jailer")
+	waitKVM := getenv("BACKLOT_FC_WAITKVM", filepath.Join(repo, "runtime/bin/fc-waitkvm"))
 
 	w, err := world.Start(world.StartOpts{
 		ID:            "demo",
@@ -52,6 +53,7 @@ func run() int {
 		Rootfs:        rootfs,
 		Firecracker:   fc,
 		Jailer:        jailer,
+		WaitKVM:       waitKVM,
 		BareExec:      true,
 	})
 	if err != nil {
