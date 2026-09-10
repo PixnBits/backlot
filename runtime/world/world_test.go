@@ -7,7 +7,7 @@ import (
 )
 
 func TestFcConfigDefaultHasNoBareExec(t *testing.T) {
-	b, err := fcConfigJSON(false)
+	b, err := fcConfigJSON(false, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestFcConfigDefaultHasNoBareExec(t *testing.T) {
 }
 
 func TestFcConfigBareExecAppendsBootArg(t *testing.T) {
-	b, err := fcConfigJSON(true)
+	b, err := fcConfigJSON(true, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,5 +101,21 @@ func TestDropIDsKeepsNonRoot(t *testing.T) {
 	}
 	if uid != 1000 || gid != 1000 {
 		t.Fatalf("uid=%d gid=%d", uid, gid)
+	}
+}
+
+func TestFcConfigGuestCID(t *testing.T) {
+	b, err := fcConfigJSON(false, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	vs := cfg["vsock"].(map[string]any)
+	// json numbers are float64
+	if int(vs["guest_cid"].(float64)) != 5 {
+		t.Fatalf("guest_cid=%v want 5", vs["guest_cid"])
 	}
 }

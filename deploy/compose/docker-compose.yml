@@ -1,0 +1,88 @@
+# Backlot M3 — control plane (Phase 1) + optional lot-boss profile kvm (Phase 2).
+# desk + router: ordinary containers, NO /dev/kvm, NO privileged.
+# lot-boss is optional under profile "kvm" (Phase 2 host Firecracker shepherd).
+#
+#   docker compose -f deploy/compose/docker-compose.yml up --build -d desk router
+#
+# Host ports default to 18080/18090 to avoid clashing with other local :8080 listeners.
+# Containers still listen on 8080 (router) and 8090 (desk) internally.
+#
+# Sit bars:
+#   1. desk+router have no /dev/kvm
+#   2. lease without host lot-boss → 503 world engine unavailable
+#   3. GET /health → 200
+
+services:
+  desk:
+    build:
+      context: ../../desk
+      dockerfile: Dockerfile
+    volumes:
+      - desk-data:/data
+    ports:
+      - "${BACKLOT_DESK_HOST_PORT:-18090}:8090"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Explicit: no devices:, no privileged:, no /dev/kvm
+
+  router:
+    build:
+      context: ../../router
+      dockerfile: Dockerfile
+    ports:
+      - "${BACKLOT_ROUTER_HOST_PORT:-18080}:8080"
+    environment:
+      DESK_URL: http://desk:8090
+      # LOT_BOSS_URL intentionally unset — UnavailableEngine, lease returns 503
+    depends_on:
+      - desk
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Explicit: no devices:, no privileged:, no /dev/kvm
+
+  # Optional — NOT started by `up desk router`. Profile kvm only.
+  # Privileged host shepherd: starts one Firecracker/jailer per world on the host.
+  # Prefer running ./lot/bin/lot-boss on the host instead of this container.
+  lot-boss:
+    profiles: ["kvm"]
+    image: golang:1.22-bookworm
+    working_dir: /src/lot
+    volumes:
+      - ../..:/src
+      - /dev/kvm:/dev/kvm
+      - /usr/local/firecracker/v1.15.1:/usr/local/firecracker/v1.15.1:ro
+      - /tmp/backlot-lot:/tmp/backlot-lot
+    environment:
+      DESK_URL: http://127.0.0.1:18090
+      FIRECRACKER_BIN: /usr/local/firecracker/v1.15.1/firecracker
+      JAILER_BIN: /usr/local/firecracker/v1.15.1/jailer
+      BACKLOT_ROOT: /src
+    command:
+      - go
+      - run
+      - ./cmd/lot-boss
+      - -addr
+      - :8070
+      - -max-worlds
+      - "3"
+      - -warm-pool
+      - "0"
+      - -desk
+      - http://127.0.0.1:18090
+      - -work
+      - /tmp/backlot-lot
+      - -kernel
+      - /src/guest/artifacts/vmlinux-6.1.102
+      - -rootfs
+      - /src/guest/artifacts/rootfs.ext4
+    network_mode: host
+    privileged: true
+
+volumes:
+  desk-data:

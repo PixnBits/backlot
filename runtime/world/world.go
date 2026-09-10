@@ -27,6 +27,11 @@ const (
 
 type StartOpts struct {
 	ID, WorkDir, Kernel, Rootfs, Firecracker, Jailer string
+	// WaitKVM is the jailer --exec-file helper; blocks until overlay bind live, then execs /firecracker.real.
+	WaitKVM string
+	// GuestCID is the Firecracker vsock guest CID (must be >= 3 and unique on the host).
+	// Zero means default 3 (single-world / M2).
+	GuestCID uint32
 	// BareExec appends backlot.bare_exec=1 to the Firecracker kernel cmdline.
 	// Product shepherd leaves this false. Only m2test sets it so the guest
 	// can expose /v1/internal/bare-exec.
@@ -38,6 +43,7 @@ type World struct {
 	EventsPath string
 	JailRoot   string
 	UDS        string
+	GuestCID   uint32
 	Engine     string // "jailer" or "firecracker"
 	cmd        *exec.Cmd
 	eventLn    net.Listener
@@ -57,7 +63,17 @@ func Start(opts StartOpts) (*World, error) {
 	_ = ef.Close()
 
 	chrootBase := filepath.Join(opts.WorkDir, "jails")
-	jailRoot := filepath.Join(chrootBase, "firecracker", opts.ID, "root")
+	// Jailer places the chroot at <base>/<basename(exec-file)>/<id>/root.
+	jailFolder := "firecracker"
+	if os.Geteuid() == 0 {
+		waitKVM, err := resolveWaitKVM(opts.WaitKVM)
+		if err != nil {
+			return nil, err
+		}
+		opts.WaitKVM = waitKVM
+		jailFolder = filepath.Base(waitKVM)
+	}
+	jailRoot := filepath.Join(chrootBase, jailFolder, opts.ID, "root")
 	if err := os.MkdirAll(jailRoot, 0o755); err != nil {
 		return nil, err
 	}
@@ -67,7 +83,14 @@ func Start(opts StartOpts) (*World, error) {
 	if err := copyFile(opts.Rootfs, filepath.Join(jailRoot, "rootfs.ext4")); err != nil {
 		return nil, err
 	}
-	cfg, err := fcConfigJSON(opts.BareExec)
+	guestCID := opts.GuestCID
+	if guestCID == 0 {
+		guestCID = 3
+	}
+	if guestCID < 3 {
+		return nil, fmt.Errorf("guest CID must be >= 3, got %d", guestCID)
+	}
+	cfg, err := fcConfigJSON(opts.BareExec, guestCID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +113,7 @@ func Start(opts StartOpts) (*World, error) {
 		EventsPath: events,
 		JailRoot:   jailRoot,
 		UDS:        uds,
+		GuestCID:   guestCID,
 		eventLn:    ln,
 		client: &http.Client{
 			Timeout: 90 * time.Second,
@@ -133,8 +157,26 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		return nil, "", err
 	}
 	if os.Geteuid() == 0 {
+		waitKVM, err := resolveWaitKVM(opts.WaitKVM)
+		if err != nil {
+			return nil, "", err
+		}
 		uid, gid, err := dropIDs(os.Getuid(), os.Getgid(), os.Getenv)
 		if err != nil {
+			return nil, "", err
+		}
+		realFC := filepath.Join(jailRoot, "firecracker.real")
+		waitDst := filepath.Join(jailRoot, filepath.Base(waitKVM))
+		if err := copyFile(opts.Firecracker, realFC); err != nil {
+			return nil, "", fmt.Errorf("copy firecracker.real: %w", err)
+		}
+		if err := os.Chmod(realFC, 0o755); err != nil {
+			return nil, "", err
+		}
+		if err := copyFile(waitKVM, waitDst); err != nil {
+			return nil, "", fmt.Errorf("copy fc-waitkvm: %w", err)
+		}
+		if err := os.Chmod(waitDst, 0o755); err != nil {
 			return nil, "", err
 		}
 		if err := chownTree(jailRoot, uid, gid); err != nil {
@@ -142,7 +184,7 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		}
 		cmd := exec.Command(opts.Jailer,
 			"--id", opts.ID,
-			"--exec-file", opts.Firecracker,
+			"--exec-file", waitKVM,
 			"--uid", strconv.Itoa(uid),
 			"--gid", strconv.Itoa(gid),
 			"--chroot-base-dir", chrootBase,
@@ -304,6 +346,24 @@ func (w *World) Stop() {
 	unmountKvmOverlay(w.kvmOverlay)
 }
 
+func resolveWaitKVM(explicit string) (string, error) {
+	waitKVM := explicit
+	if waitKVM == "" {
+		waitKVM = os.Getenv("BACKLOT_FC_WAITKVM")
+	}
+	if waitKVM == "" {
+		return "", fmt.Errorf("WaitKVM required for jailer (set StartOpts.WaitKVM or BACKLOT_FC_WAITKVM)")
+	}
+	// Match jailer's canonicalize so <base>/<basename>/<id>/root agrees.
+	if resolved, err := filepath.EvalSymlinks(waitKVM); err == nil {
+		waitKVM = resolved
+	}
+	if _, err := os.Stat(waitKVM); err != nil {
+		return "", fmt.Errorf("WaitKVM %s: %w", waitKVM, err)
+	}
+	return waitKVM, nil
+}
+
 // dropIDs is the uid/gid the VMM runs as after the privileged starter
 // unshares. Passing 0 makes the jailed KVM node unusable on this host
 // (EACCES). sudo/pkexec must export SUDO_UID/PKEXEC_UID (and preferably
@@ -402,7 +462,7 @@ func copyFile(src, dst string) error {
 
 const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off nomodules random.trust_cpu=on init=/sbin/init root=/dev/vda rw"
 
-func fcConfigJSON(bareExec bool) ([]byte, error) {
+func fcConfigJSON(bareExec bool, guestCID uint32) ([]byte, error) {
 	bootArgs := defaultBootArgs
 	if bareExec {
 		bootArgs = bootArgs + " backlot.bare_exec=1"
@@ -426,7 +486,7 @@ func fcConfigJSON(bareExec bool) ([]byte, error) {
 			"smt":          false,
 		},
 		"vsock": map[string]any{
-			"guest_cid": 3,
+			"guest_cid": guestCID,
 			"uds_path":  "vsock.sock",
 		},
 	}

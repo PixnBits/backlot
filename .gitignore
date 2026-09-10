@@ -9,3 +9,6 @@ runtime/bin/
 *.ext4
 *.tar
 *.tar.gz
+desk/bin/
+router/bin/
+lot/bin/
