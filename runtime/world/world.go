@@ -43,8 +43,9 @@ type World struct {
 	EventsPath string
 	JailRoot   string
 	UDS        string
+	APISock    string
 	GuestCID   uint32
-	Engine     string // "jailer" or "firecracker"
+	Engine     string
 	cmd        *exec.Cmd
 	eventLn    net.Listener
 	client     *http.Client
@@ -97,6 +98,9 @@ func Start(opts StartOpts) (*World, error) {
 	if err := os.WriteFile(filepath.Join(jailRoot, "config.json"), cfg, 0o644); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(jailRoot, "run"), 0o755); err != nil {
+		return nil, err
+	}
 
 	uds := filepath.Join(jailRoot, "vsock.sock")
 	_ = os.Remove(uds)
@@ -113,6 +117,7 @@ func Start(opts StartOpts) (*World, error) {
 		EventsPath: events,
 		JailRoot:   jailRoot,
 		UDS:        uds,
+		APISock:    filepath.Join(jailRoot, "run", "firecracker.socket"),
 		GuestCID:   guestCID,
 		eventLn:    ln,
 		client: &http.Client{
@@ -191,7 +196,7 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 			"--cgroup-version", "2",
 			"--parent-cgroup", "backlot-m2",
 			"--",
-			"--no-api",
+			"--api-sock", "/run/firecracker.socket",
 			"--config-file", "config.json",
 		)
 		cmd.Stdout = logf
@@ -201,7 +206,7 @@ func startVMM(opts StartOpts, chrootBase, jailRoot string) (*exec.Cmd, string, e
 		}
 		return cmd, "jailer", nil
 	}
-	cmd := exec.Command(opts.Firecracker, "--no-api", "--config-file", "config.json")
+	cmd := exec.Command(opts.Firecracker, "--api-sock", "run/firecracker.socket", "--config-file", "config.json")
 	cmd.Dir = jailRoot
 	cmd.Stdout = logf
 	cmd.Stderr = logf
@@ -491,4 +496,44 @@ func fcConfigJSON(bareExec bool, guestCID uint32) ([]byte, error) {
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// Pause freezes vCPUs via the Firecracker API. RAM stays held.
+func (w *World) Pause() error {
+	return w.fcAPI(http.MethodPut, "/pause")
+}
+
+// Resume unfreezes vCPUs after Pause.
+func (w *World) Resume() error {
+	return w.fcAPI(http.MethodPut, "/resume")
+}
+
+func (w *World) fcAPI(method, path string) error {
+	if w == nil || w.APISock == "" {
+		return fmt.Errorf("world: no firecracker api socket")
+	}
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				d.Timeout = 2 * time.Second
+				return d.DialContext(ctx, "unix", w.APISock)
+			},
+		},
+	}
+	req, err := http.NewRequest(method, "http://localhost"+path, nil)
+	if err != nil {
+		return err
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("firecracker %s %s: %w", method, path, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		b, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("firecracker %s %s: %s %s", method, path, res.Status, b)
+	}
+	return nil
 }

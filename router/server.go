@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -150,12 +151,40 @@ func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	switch body.Phase {
 	case "dark", "":
-		writeJSON(w, http.StatusOK, map[string]any{"id": r.PathValue("id"), "network": "dark"})
+		body.Phase = "dark"
 	case "proxy":
-		httpError(w, http.StatusNotImplemented, "proxy network phase not built")
+		body.Phase = "proxy"
 	default:
 		httpError(w, http.StatusBadRequest, "phase must be dark or proxy")
+		return
 	}
+	info, err := s.Engine.SetNetwork(r.Context(), r.PathValue("id"), body.Phase)
+	if err != nil {
+		if errors.Is(err, ErrEngineUnavailable) {
+			httpError(w, http.StatusServiceUnavailable, "world engine unavailable")
+			return
+		}
+		if strings.Contains(err.Error(), "not found") {
+			httpError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		httpError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	out := map[string]any{"id": r.PathValue("id"), "network": body.Phase}
+	if info != nil {
+		out["id"] = info.ID
+		out["network"] = info.Network
+		out["state"] = info.State
+	}
+	if body.Phase == "proxy" {
+		proxy := strings.TrimSpace(os.Getenv("BACKLOT_EGRESS_PROXY"))
+		if proxy == "" {
+			proxy = "http://proxy:3128"
+		}
+		out["proxy"] = proxy
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {

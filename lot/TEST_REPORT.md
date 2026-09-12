@@ -60,4 +60,22 @@ sudo -E ./scripts/m3test-root.sh
 - Unique guest CIDs per world (`GuestCID` in StartOpts).
 - Guest vsock events are tailed into the continuity **desk** (not only per-world tempfile).
 - Compose packing: desk+router unprivileged; lot-boss is host shepherd — not three microVMs in one container.
-- Phase 3 not claimed.
+- Phase 3: `ttl_pause` clock + Firecracker Pause/Resume via API sock; userspace egress-proxy (`dark`/`proxy`). `ttl_store`/`ttl_prune` still not claimed.
+- Guests remain vsock-only (no NIC). Kubernetes is not the M3 product.
+
+
+## Phase 3 — pause + userspace proxy (2026-09-12)
+
+Unit sit on `feature/m3-phase3` (no sudo this run):
+
+| Bar | Result |
+|---|---|
+| `ttl_pause` clock pauses after idle, Resume on activity | PASS (`TestConsiderPauseHoldsRAMState`) |
+| Firecracker API sock (`--api-sock`, not `--no-api`) | present in `runtime/world` |
+| PUT `/v1/worlds/{id}/network` `dark`/`proxy` (not 501) | PASS (`TestNetworkDarkAndProxy`) |
+| Bad phase / unknown world | PASS |
+| `getPM` N/A — egress-proxy default deny, allowlist env | PASS (`proxy` `TestHostOf`) |
+| PRD/README claim Kubernetes as M3 product | gone; §15.1 is Compose-local |
+| `ttl_store` / `ttl_prune` | still not claimed |
+| Live `make test-m3` (Phase 2 fleet) | needs sudo/jailer — Tester re-sit |
+

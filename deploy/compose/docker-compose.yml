@@ -1,8 +1,8 @@
 # Backlot M3 — control plane (Phase 1) + optional lot-boss profile kvm (Phase 2).
-# desk + router: ordinary containers, NO /dev/kvm, NO privileged.
+# desk + router + proxy: ordinary containers, NO /dev/kvm, NO privileged.
 # lot-boss is optional under profile "kvm" (Phase 2 host Firecracker shepherd).
 #
-#   docker compose -f deploy/compose/docker-compose.yml up --build -d desk router
+#   docker compose -f deploy/compose/docker-compose.yml up --build -d desk router proxy
 #
 # Host ports default to 18080/18090 to avoid clashing with other local :8080 listeners.
 # Containers still listen on 8080 (router) and 8090 (desk) internally.
@@ -36,9 +36,11 @@ services:
       - "${BACKLOT_ROUTER_HOST_PORT:-18080}:8080"
     environment:
       DESK_URL: http://desk:8090
+      BACKLOT_EGRESS_PROXY: http://proxy:3128
       # LOT_BOSS_URL intentionally unset — UnavailableEngine, lease returns 503
     depends_on:
       - desk
+      - proxy
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -46,6 +48,23 @@ services:
       - /tmp
     # Explicit: no devices:, no privileged:, no /dev/kvm
 
+
+  # Userspace egress proxy — only future guest egress path. No /dev/kvm. Guests stay vsock-only.
+  proxy:
+    build:
+      context: ../../proxy
+      dockerfile: Dockerfile
+    ports:
+      - "${BACKLOT_PROXY_HOST_PORT:-13128}:3128"
+    environment:
+      LISTEN: ":3128"
+      # Empty allowlist = deny all. Operator fills EGRESS_ALLOW=host1,host2 when punching via Court.
+      EGRESS_ALLOW: "${BACKLOT_EGRESS_ALLOW:-}"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
   # Optional — NOT started by `up desk router`. Profile kvm only.
   # Privileged host shepherd: starts one Firecracker/jailer per world on the host.
   # Prefer running ./lot/bin/lot-boss on the host instead of this container.

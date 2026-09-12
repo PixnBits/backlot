@@ -1,4 +1,4 @@
-# Backlot — M1 inner ring + M2 one world + M3 compose CP + Phase 2 fleet
+# Backlot — M1 inner ring + M2 one world + M3 compose CP + Phase 2 fleet + Phase 3 pause/proxy
 PYTHON ?= python3
 export FIRECRACKER_BIN ?= /usr/local/firecracker/v1.15.1/firecracker
 export JAILER_BIN ?= /usr/local/firecracker/v1.15.1/jailer
@@ -18,6 +18,7 @@ test-go:
 	cd desk && go test ./...
 	cd router && go test ./...
 	cd lot && go test ./...
+	cd proxy && go test ./...
 
 artifacts:
 	$(PYTHON) inner/run.py --print-plan --dump-table inner/artifacts/syscall-table.txt > inner/artifacts/plan.txt

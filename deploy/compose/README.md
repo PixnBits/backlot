@@ -30,7 +30,7 @@ Or: `make test-compose-cp`
 2. Lease without a reachable host lot-boss/KVM engine → **503** (do not invent a world).
 3. `/health` returns **200**.
 
-Snapshot/restore endpoints return **501** (M4). Network phase `proxy` returns **501**.
+Snapshot/restore endpoints return **501** (M4). Network phase `dark` / `proxy` is live. `proxy` is the userspace egress-proxy container (default deny). Guests still have no NIC.
 
 ## Phase 2 demo — three real worlds on the KVM host
 
@@ -99,4 +99,4 @@ make test-m3
 sudo -E ./scripts/m3test-root.sh
 ```
 
-See `lot/TEST_REPORT.md`. Phase 3 is not claimed here.
+See `lot/TEST_REPORT.md`. Phase 3: `ttl_pause` (Firecracker Pause, RAM held) + userspace `proxy`. `ttl_store` / `ttl_prune` still deferred.

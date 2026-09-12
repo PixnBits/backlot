@@ -32,8 +32,8 @@ func TestHealth(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"engine_ready":false`) {
 		t.Fatalf("expected engine_ready false without artifacts: %s", rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), `"phase":2`) {
-		t.Fatalf("expected phase 2: %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), `"phase":3`) {
+		t.Fatalf("expected phase 3: %s", rr.Body.String())
 	}
 }
 

@@ -46,18 +46,21 @@ type Config struct {
 
 // Boss tracks leased world slots and shepherds Firecracker via runtime/world.
 type Boss struct {
-	mu        sync.Mutex
-	cfg       Config
-	worlds    map[string]*slot
-	nextCID   uint32
-	deskHTTP  *http.Client
-	stopping  bool
+	mu       sync.Mutex
+	cfg      Config
+	worlds   map[string]*slot
+	nextCID  uint32
+	deskHTTP *http.Client
+	stopping bool
 }
 
 type slot struct {
-	info   World
-	w      *world.World
-	cancel context.CancelFunc
+	info       World
+	w          *world.World
+	cancel     context.CancelFunc
+	lastActive time.Time
+	ttlPause   time.Duration
+	paused     bool
 }
 
 // World is the JSON shape returned to router/agents.
@@ -106,12 +109,14 @@ func NewBossConfig(cfg Config) *Boss {
 	if cfg.WaitKVM == "" {
 		cfg.WaitKVM = os.Getenv("BACKLOT_FC_WAITKVM")
 	}
-	return &Boss{
+	b := &Boss{
 		cfg:      cfg,
 		worlds:   map[string]*slot{},
 		nextCID:  3,
 		deskHTTP: &http.Client{Timeout: 10 * time.Second},
 	}
+	go b.pauseLoop()
+	return b
 }
 
 func getenv(k, d string) string {
@@ -177,13 +182,14 @@ func (b *Boss) Handler() http.Handler {
 			"engine_ready": ready,
 			"max_worlds":   b.cfg.MaxWorlds,
 			"warm_pool":    b.cfg.WarmPool,
-			"phase":        2,
+			"phase":        3,
 			"euid":         os.Geteuid(),
 		})
 	})
 	mux.HandleFunc("POST /v1/worlds", b.handleLease)
 	mux.HandleFunc("GET /v1/worlds/{id}", b.handleGet)
 	mux.HandleFunc("POST /v1/worlds/{id}/heartbeat", b.handleHeartbeat)
+	mux.HandleFunc("PUT /v1/worlds/{id}/network", b.handleNetwork)
 	mux.HandleFunc("POST /v1/worlds/{id}/exec", b.handleExec)
 	mux.HandleFunc("DELETE /v1/worlds/{id}", b.handleDestroy)
 	mux.HandleFunc("GET /v1/worlds", b.handleList)
@@ -296,7 +302,7 @@ func (b *Boss) Lease(ctx context.Context, body leaseBody) (*World, error) {
 		w.Stop()
 		return nil, fmt.Errorf("cap reached: live=%d max=%d", len(b.worlds), b.cfg.MaxWorlds)
 	}
-	b.worlds[id] = &slot{info: info, w: w, cancel: cancel}
+	b.worlds[id] = &slot{info: info, w: w, cancel: cancel, lastActive: time.Now(), ttlPause: parseTTLPause(body.TTLPause)}
 	_ = b.commitDesk(id, "world_start", map[string]any{
 		"engine":    w.Engine,
 		"guest_cid": w.GuestCID,
@@ -319,11 +325,55 @@ func (b *Boss) handleGet(w http.ResponseWriter, r *http.Request) {
 func (b *Boss) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if _, ok := b.worlds[r.PathValue("id")]; !ok {
+	s, ok := b.worlds[r.PathValue("id")]
+	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "world not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	s.onActivity()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": s.info.State})
+}
+
+func (b *Boss) handleNetwork(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Phase string `json:"phase"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	info, err := b.SetNetwork(r.PathValue("id"), body.Phase)
+	if err != nil {
+		if err.Error() == "world not found" {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		if err.Error() == "phase must be dark or proxy" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (b *Boss) SetNetwork(id, phase string) (*World, error) {
+	switch phase {
+	case "dark", "":
+		phase = "dark"
+	case "proxy":
+		phase = "proxy"
+	default:
+		return nil, fmt.Errorf("phase must be dark or proxy")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, ok := b.worlds[id]
+	if !ok {
+		return nil, fmt.Errorf("world not found")
+	}
+	s.info.Network = phase
+	s.onActivity()
+	out := s.info
+	return &out, nil
 }
 
 func (b *Boss) handleExec(w http.ResponseWriter, r *http.Request) {
@@ -359,6 +409,9 @@ func (b *Boss) Exec(ctx context.Context, id string, body []byte) (int, []byte, e
 	if !ok {
 		return 0, nil, fmt.Errorf("world not found")
 	}
+	b.mu.Lock()
+	s.onActivity()
+	b.mu.Unlock()
 	var req execReq
 	if err := json.Unmarshal(body, &req); err != nil {
 		return http.StatusBadRequest, mustJSON(map[string]string{"error": "invalid json"}), nil
