@@ -30,7 +30,7 @@ Or: `make test-compose-cp`
 2. Lease without a reachable host lot-boss/KVM engine → **503** (do not invent a world).
 3. `/health` returns **200**.
 
-Snapshot/restore endpoints return **501** (M4). Network phase `dark` / `proxy` is live. `proxy` is the userspace egress-proxy container (default deny). Guests still have no NIC.
+Snapshot/restore endpoints return **501** (M4). Network phase `dark` / `proxy` is **policy intent** (lease label + internal `http://proxy:3128`). Guests still have no NIC; guest→proxy is post-M3. The proxy container is Compose-internal only — **do not** publish `:13128` (unauthenticated).
 
 ## Phase 2 demo — three real worlds on the KVM host
 

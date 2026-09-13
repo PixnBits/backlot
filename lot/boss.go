@@ -355,6 +355,8 @@ func (b *Boss) handleNetwork(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, info)
 }
 
+// SetNetwork records lease network policy intent (dark|proxy).
+// It does not attach a guest NIC or punch the userspace proxy.
 func (b *Boss) SetNetwork(id, phase string) (*World, error) {
 	switch phase {
 	case "dark", "":

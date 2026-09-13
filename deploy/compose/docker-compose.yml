@@ -54,8 +54,9 @@ services:
     build:
       context: ../../proxy
       dockerfile: Dockerfile
-    ports:
-      - "${BACKLOT_PROXY_HOST_PORT:-13128}:3128"
+    # No host ports. Unauthenticated proxy must stay on the Compose network only.
+    expose:
+      - "3128"
     environment:
       LISTEN: ":3128"
       # Empty allowlist = deny all. Operator fills EGRESS_ALLOW=host1,host2 when punching via Court.

@@ -105,10 +105,8 @@ A sidecar that only tails container logs is not this. The sidecar is a sensor, n
 Each leased world is a jailed Firecracker microVM shepherded by host lot-boss. Compose runs desk, router, and the userspace egress-proxy — not the VMM. A later Kata/`kata-fc` pod is deferred past M3:
 
 - **world-runtime** — small API: health, exec-via-bwrap, file ingress/egress through an allow-list, lease heartbeat.
-- **tele-sidecar** — loads guest eBPF (or talks to a guest Tetragon-lite), ships events to the cluster sink.
-- Optional **egress-proxy** — the only network the inner ring may reach; user-space allow-list + audit.
-
-Pause + two containers share the guest kernel. That is what makes guest eBPF useful. Do not put the telemetry agent *inside* the Bubblewrap jail.
+- **tele-sidecar** — guest eBPF / Tetragon-lite is **post-M3**. M3 events go world → desk over vsock; no guest sidecar required.
+- **egress-proxy** (Compose, internal-only) — userspace allow-list + audit. Guests stay vsock-only; the guest→proxy bridge is **post-M3**. `PUT …/network` `dark`/`proxy` is **policy intent** on the lease (lot-boss/router label + proxy URL). It does not punch a guest NIC or Cilium rule.
 
 ### 6.3 Session router
 
@@ -116,13 +114,12 @@ Pause + two containers share the guest kernel. That is what makes guest eBPF use
 - Agent traffic is sticky for the lease. No “new container per tool call” unless the caller asks for a fresh world.
 - Warm pool: N pre-booted worlds in `Idle`, claimed in O(milliseconds) + policy apply.
 - Heartbeat / any usage slides `ttl_pause`, `ttl_store`, `ttl_prune` (§15.6).
-- Mid-lease **network phases** (examples):
-  1. `dark` — no egress
-  2. `proxy` — only egress-proxy
-  3. `allowlist` — named hosts for the current task
-  4. `frozen` — no new connections; existing may drain
+- Mid-lease **network phases** (M3):
+  1. `dark` — no egress (guest vsock-only; default)
+  2. `proxy` — policy intent: lease is labeled to use the Compose userspace proxy URL when a guest→proxy bridge exists (**post-M3**). Today this is metadata + URL, not a dataplane change.
+  3. `allowlist` / `frozen` — **post-M3**
 
-Implemented as NetworkPolicy / Cilium policy updates plus seccomp/bwrap `--unshare-net` vs `--share-net` for the *next* tool spawn. Already-running processes do not magically lose sockets; document that. Phase changes apply to subsequent execs and, where possible, proxy rules immediately.
+M3 does **not** implement phases as NetworkPolicy / Cilium. Kubernetes policy is deferred with the cluster. Guest still has no NIC. Phase changes do not grant sockets to an already-running process.
 
 ### 6.4 Inner ring (Bubblewrap)
 

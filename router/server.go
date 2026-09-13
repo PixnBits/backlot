@@ -144,6 +144,8 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp)
 }
 
+// handleNetwork sets dark|proxy policy intent on the lease. M3 does not
+// bridge guest traffic to the Compose proxy; that path is post-M3.
 func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Phase string `json:"phase"`
