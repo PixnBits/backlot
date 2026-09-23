@@ -59,7 +59,7 @@ Existing pieces (Firecracker, Kata, Bubblewrap, Tetragon, agent-sandbox SIG) sol
 - Multi-cloud control plane, billing, or a public SaaS in v0.1.
 - Nested Firecracker inside Firecracker (the VMM does not expose `/dev/kvm` to guests).
 - GPU passthrough (Firecracker does not; pick Cloud Hypervisor/QEMU later if needed).
-- Replacing Kubernetes. We *use* it as the fleet manager.
+- Replacing Kubernetes. M3 is Compose-local; a cluster fleet manager is deferred past M3.
 - A general malware-analysis lab (no Cuckoo clone).
 - Claiming the inner ring is unbreakable. Residual risk is the guest kernel + VMM + operator error.
 
@@ -100,29 +100,26 @@ Two eBPF vantage points, on purpose:
 
 A sidecar that only tails container logs is not this. The sidecar is a sensor, not a logger of stdout.
 
-### 6.2 World as a pod
+### 6.2 World as a microVM (M3: lot-boss, not a Kubernetes pod)
 
-Each leased world is a Kubernetes pod with `runtimeClassName: kata-fc` (or equivalent Firecracker-containerd class):
+Each leased world is a jailed Firecracker microVM shepherded by host lot-boss. Compose runs desk, router, and the userspace egress-proxy — not the VMM. A later Kata/`kata-fc` pod is deferred past M3:
 
 - **world-runtime** — small API: health, exec-via-bwrap, file ingress/egress through an allow-list, lease heartbeat.
-- **tele-sidecar** — loads guest eBPF (or talks to a guest Tetragon-lite), ships events to the cluster sink.
-- Optional **egress-proxy** — the only network the inner ring may reach; user-space allow-list + audit.
-
-Pause + two containers share the guest kernel. That is what makes guest eBPF useful. Do not put the telemetry agent *inside* the Bubblewrap jail.
+- **tele-sidecar** — guest eBPF / Tetragon-lite is **post-M3**. M3 events go world → desk over vsock; no guest sidecar required.
+- **egress-proxy** (Compose, internal-only) — userspace allow-list + audit. Guests stay vsock-only; the guest→proxy bridge is **post-M3**. `PUT …/network` `dark`/`proxy` is **policy intent** on the lease (lot-boss/router label + proxy URL). It does not punch a guest NIC or Cilium rule.
 
 ### 6.3 Session router
 
-- Control plane maps `world_id` / `session_id` → pod IP (or internal Service).
+- Control plane maps `world_id` / `session_id` → lot-boss world (Compose-local).
 - Agent traffic is sticky for the lease. No “new container per tool call” unless the caller asks for a fresh world.
 - Warm pool: N pre-booted worlds in `Idle`, claimed in O(milliseconds) + policy apply.
 - Heartbeat / any usage slides `ttl_pause`, `ttl_store`, `ttl_prune` (§15.6).
-- Mid-lease **network phases** (examples):
-  1. `dark` — no egress
-  2. `proxy` — only egress-proxy
-  3. `allowlist` — named hosts for the current task
-  4. `frozen` — no new connections; existing may drain
+- Mid-lease **network phases** (M3):
+  1. `dark` — no egress (guest vsock-only; default)
+  2. `proxy` — policy intent: lease is labeled to use the Compose userspace proxy URL when a guest→proxy bridge exists (**post-M3**). Today this is metadata + URL, not a dataplane change.
+  3. `allowlist` / `frozen` — **post-M3**
 
-Implemented as NetworkPolicy / Cilium policy updates plus seccomp/bwrap `--unshare-net` vs `--share-net` for the *next* tool spawn. Already-running processes do not magically lose sockets; document that. Phase changes apply to subsequent execs and, where possible, proxy rules immediately.
+M3 does **not** implement phases as NetworkPolicy / Cilium. Kubernetes policy is deferred with the cluster. Guest still has no NIC. Phase changes do not grant sockets to an already-running process.
 
 ### 6.4 Inner ring (Bubblewrap)
 
@@ -210,12 +207,13 @@ Repo, naming, rings, API sketch.
 - Decoy opens + start/exit events to a file on the **host** (not yet the cluster desk)
 - Guest nic down / vsock only. No `/dev/kvm` or host audit file in the guest workspace.
 
-### M3 — Fleet slice
+### M3 — Fleet slice (Compose-local)
 
-- RuntimeClass + two-node-capable manifest
-- Session router + warm pool of 1
-- Network phases `dark` and `proxy`
-- Host Tetragon DaemonSet (or documented Falco) watching the VMM process
+- Docker Compose control plane: desk + router + userspace egress `proxy`
+- Host lot-boss shepherds jailed Firecracker worlds (cap 3)
+- Network phases `dark` and `proxy` (no guest NIC)
+- `ttl_pause`: Firecracker Pause, RAM held; heartbeat/exec Resume
+- Deferred past M3: k3s/Kata/RuntimeClass, Tetragon DaemonSet, cluster warm pool, `ttl_store`/`ttl_prune`
 
 ### M4 — Compliance demo
 
@@ -254,7 +252,7 @@ If “Backlot” feels too cute in a compliance deck, the sober subtitle is **Op
 
 ## 14. Open questions
 
-1. ~~First target runtime~~ → **Kubernetes + Kata-fc / firecracker-containerd** (§15.1).
+1. ~~First target runtime~~ → **Compose-local desk+router+proxy + host lot-boss** (§15.1). Kubernetes/Kata deferred past M3.
 2. ~~Public vs private~~ → **public** (§15.3). Flip visibility in GitHub settings.
 3. ~~Language for world-runtime~~ → **Go** (§15.2).
 4. Snapshot/restore: pulled forward into lease clocks (§15.6). M3 should pause; M4 should store/restore.
@@ -268,15 +266,20 @@ If “Backlot” feels too cute in a compliance deck, the sober subtitle is **Op
 
 # 15. Decisions log (v0.3 — 2026-08-30)
 
-## 15.1 Target runtime: Kubernetes first
+## 15.1 Target runtime: Compose-local (M3 product)
 
-Worlds are scheduled as pods with a Firecracker-backed RuntimeClass (`kata-fc` or firecracker-containerd). Control plane, router, continuity sink, and warm-pool controller are ordinary cluster workloads. Nodes that run worlds must expose `/dev/kvm` (bare metal preferred; nested virt is allowed with the I/O tax documented in §11).
+M3 is **not** Kubernetes. The shipped fleet slice is:
 
-Raw Firecracker + jailer remains the *engine*, not the user-facing orchestrator.
+- Docker Compose services: **desk**, **router**, userspace **egress-proxy** (no `/dev/kvm` in those containers).
+- Host **lot-boss** starting jailed Firecracker worlds on a KVM machine.
+- Network phases `dark` / `proxy`. Guests stay vsock-only; the proxy is the only future egress path.
+- `ttl_pause` freezes vCPUs (RAM held). `ttl_store` / `ttl_prune` wait until pause is real (now) and are still not claimed.
+
+Kubernetes, Kata/`kata-fc`, a second node, Tetragon DaemonSet, and a cluster warm pool are **deferred past M3**. Raw Firecracker + jailer remains the engine.
 
 ## 15.2 Language
 
-**Go.** Kubernetes gravity wins at M3. Firecracker’s Rust does not need a second runtime in this repo. Dual implementation is a non-goal.
+**Go.** Already the language for router, lot-boss, and world-runtime. Firecracker’s Rust does not need a second runtime in this repo. Dual implementation is a non-goal.
 
 Closed 2026-08-30. Do not reopen.
 
@@ -344,6 +347,6 @@ Default sketch for the demo profile (not law): `ttl_pause=15m`, `ttl_store=2h`, 
 
 The first world is **raw Firecracker + jailer** on a KVM laptop/VM. Kata-fc waits until a cluster exists.
 
-§15.1 still holds for the *product*: Kubernetes is the fleet manager; Firecracker is the engine. M2 talks to the engine directly so M1’s jail is proven inside one microVM before RuntimeClass, a warm pool, or a DaemonSet can dilute it.
+§15.1 for M3 is Compose-local: Firecracker is the engine; desk+router+proxy+lot-boss is the fleet slice. Kubernetes is not the M3 product.
 
 Closed 2026-08-30. Do not reopen.

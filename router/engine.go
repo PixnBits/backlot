@@ -25,28 +25,29 @@ type Engine interface {
 	Heartbeat(ctx context.Context, id string) error
 	Exec(ctx context.Context, id string, body []byte) (int, []byte, error)
 	Destroy(ctx context.Context, id string) error
+	SetNetwork(ctx context.Context, id, phase string) (*WorldInfo, error)
 }
 
 // LeaseRequest is the agent-facing lease body.
 type LeaseRequest struct {
-	Profile    string `json:"profile"`
-	TTLPause   string `json:"ttl_pause,omitempty"`
-	TTLStore   string `json:"ttl_store,omitempty"`
-	TTLPrune   string `json:"ttl_prune,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
+	Profile   string `json:"profile"`
+	TTLPause  string `json:"ttl_pause,omitempty"`
+	TTLStore  string `json:"ttl_store,omitempty"`
+	TTLPrune  string `json:"ttl_prune,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // WorldInfo is returned to agents.
 type WorldInfo struct {
-	ID         string `json:"id"`
-	Profile    string `json:"profile,omitempty"`
-	State      string `json:"state"`
-	TTLPause   string `json:"ttl_pause"`
-	TTLStore   string `json:"ttl_store"`
-	TTLPrune   string `json:"ttl_prune"`
-	Network    string `json:"network,omitempty"`
-	Engine     string `json:"engine,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
+	ID        string `json:"id"`
+	Profile   string `json:"profile,omitempty"`
+	State     string `json:"state"`
+	TTLPause  string `json:"ttl_pause"`
+	TTLStore  string `json:"ttl_store"`
+	TTLPrune  string `json:"ttl_prune"`
+	Network   string `json:"network,omitempty"`
+	Engine    string `json:"engine,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // UnavailableEngine always reports the world engine is down.
@@ -69,6 +70,10 @@ func (UnavailableEngine) Exec(context.Context, string, []byte) (int, []byte, err
 }
 
 func (UnavailableEngine) Destroy(context.Context, string) error { return ErrEngineUnavailable }
+
+func (UnavailableEngine) SetNetwork(context.Context, string, string) (*WorldInfo, error) {
+	return nil, ErrEngineUnavailable
+}
 
 // ErrEngineUnavailable is returned when lot-boss/KVM is not present.
 var ErrEngineUnavailable = fmt.Errorf("world engine unavailable")
@@ -225,7 +230,37 @@ func (e *HTTPEngine) Destroy(ctx context.Context, id string) error {
 	return nil
 }
 
+func (e *HTTPEngine) SetNetwork(ctx context.Context, id, phase string) (*WorldInfo, error) {
+	b, _ := json.Marshal(map[string]string{"phase": phase})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, e.Base+"/v1/worlds/"+id+"/network", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := e.Client.Do(req)
+	if err != nil {
+		return nil, ErrEngineUnavailable
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusServiceUnavailable {
+		return nil, ErrEngineUnavailable
+	}
+	if res.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("world not found")
+	}
+	if res.StatusCode >= 300 {
+		return nil, fmt.Errorf("lot-boss network: %s: %s", res.Status, body)
+	}
+	var info WorldInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 // ApplyLeaseDefaults fills empty TTL fields.
+
 func ApplyLeaseDefaults(lr *LeaseRequest) {
 	if lr.Profile == "" {
 		lr.Profile = "demo"

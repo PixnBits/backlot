@@ -14,7 +14,7 @@ M2 — one Firecracker world, tag `m2`. M2.1 — jailer required, tag `m2.1` →
 
 M3 Phase 1 — Compose control plane (`desk` + `router`), no `/dev/kvm` in those containers. Lease without host lot-boss → **503**. See [deploy/compose/](deploy/compose/) and `make test-compose-cp`.
 
-M3 Phase 2 — lot-boss shepherds up to **3** jailer+Firecracker worlds on the KVM host (`make test-m3`; exit 2 without KVM/sudo). See [lot/TEST_REPORT.md](lot/TEST_REPORT.md). Phase 3 not claimed.
+M3 Phase 2 — lot-boss shepherds up to **3** jailer+Firecracker worlds on the KVM host (`make test-m3`; exit 2 without KVM/sudo). See [lot/TEST_REPORT.md](lot/TEST_REPORT.md). Phase 3: `ttl_pause` (sticky world, RAM held) + userspace egress proxy (`dark`/`proxy`). Kubernetes / Kata deferred.
 
 Contract: [docs/prd.md](docs/prd.md). Build prompt: [docs/grok-build-m3.md](docs/grok-build-m3.md).
 
@@ -120,4 +120,4 @@ Demo curls: [deploy/compose/README.md](deploy/compose/README.md).
 
 ## Next
 
-Phase 3 (pause clock / userspace proxy) only after Phase 2 is green. Kubernetes / Kata later.
+Phase 3 (pause clock / userspace proxy) is Compose-local. Kubernetes / Kata / Tetragon DaemonSet are deferred past M3.

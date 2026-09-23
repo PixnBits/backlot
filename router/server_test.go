@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -132,5 +134,47 @@ func TestSnapshot501(t *testing.T) {
 	srv.Mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotImplemented {
 		t.Fatalf("status=%d", rr.Code)
+	}
+}
+
+func (e *memEngine) SetNetwork(_ context.Context, id, phase string) (*WorldInfo, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	w, ok := e.worlds[id]
+	if !ok {
+		return nil, fmt.Errorf("world not found")
+	}
+	w.Network = phase
+	cp := *w
+	return &cp, nil
+}
+
+func TestNetworkDarkAndProxy(t *testing.T) {
+	e := newMemEngine()
+	s := NewServer(e, "")
+	info, err := e.Lease(context.Background(), LeaseRequest{Profile: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/v1/worlds/"+info.ID+"/network", strings.NewReader(`{"phase":"proxy"}`))
+	s.Mux.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("proxy %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "proxy") {
+		t.Fatalf("body=%s", rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/v1/worlds/"+info.ID+"/network", strings.NewReader(`{"phase":"dark"}`))
+	s.Mux.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("dark %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/v1/worlds/"+info.ID+"/network", strings.NewReader(`{"phase":"open"}`))
+	s.Mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("open %d", rr.Code)
 	}
 }
